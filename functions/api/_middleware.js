@@ -3,6 +3,7 @@
 // derived from the server-side TEAM_PASSCODE secret.
 import {
   ensureCapturesTable,
+  ensureGoalsTable,
   ensurePeopleTable,
   ensureProjectsTable,
   ensureReportsTable,
@@ -24,6 +25,7 @@ export async function onRequest(context) {
   await ensureTargetsTable(env);
   await ensureCapturesTable(env);
   await ensurePeopleTable(env);
+  await ensureGoalsTable(env);
 
   if (url.pathname === '/api/auth') return next();
 

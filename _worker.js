@@ -385,6 +385,96 @@ async function ensureEventsTable(env) {
   ]);
 }
 
+// Goals: the outcomes Jesutofunmi is aiming at — each carries progress
+// (current of total) or a next milestone. Goals are their own section,
+// distinct from Projects (the work containers underneath them). Exactly
+// one goal may be flagged is_monthly_target; that goal is what the
+// Today banner shows, and state.targets is derived from it (see
+// goalAsTarget) so the banner and the Goals section never diverge.
+const GOALS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS goals (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  title             TEXT NOT NULL,
+  eyebrow           TEXT NOT NULL DEFAULT '',
+  detail            TEXT NOT NULL DEFAULT '',
+  due_date          TEXT,
+  milestone_date    TEXT,
+  current           INTEGER,
+  total             INTEGER,
+  is_monthly_target INTEGER NOT NULL DEFAULT 0,
+  created_by        TEXT DEFAULT '',
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL
+)`;
+
+// The eyebrow on the essays goal in her own Daybreak demo.
+const GOAL_SEED_EYEBROW = 'November · Voice';
+
+// Like validCount, but empty input means "no number" (null) rather than
+// a fallback — a goal's progress figures are optional. Returns undefined
+// for anything that is not a non-negative integer.
+function validNullableCount(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n > 100000) return undefined;
+  return n;
+}
+
+// The flagged goal dressed in the target fields: the shape
+// state.targets exposes and the /api/targets handlers answer with, so
+// the Today banner and older API callers read exactly what they read
+// before goals existed.
+function goalAsTarget(goal) {
+  if (!goal) return null;
+  return {
+    id: goal.id,
+    label: goal.title,
+    detail: goal.detail,
+    current: goal.current,
+    total: goal.total,
+    due_date: goal.due_date,
+    created_by: goal.created_by,
+    created_at: goal.created_at,
+    updated_at: goal.updated_at,
+  };
+}
+
+async function flaggedGoal(env) {
+  return env.DB.prepare(
+    'SELECT * FROM goals WHERE is_monthly_target = 1 ORDER BY id ASC LIMIT 1'
+  ).first();
+}
+
+// Self-migration, same pattern as the other tables. Seed-if-empty: the
+// one real goal moves in from the existing targets row (title, detail,
+// progress and due date copied across), flagged as the monthly target.
+// There is no delete for goals, so an empty table only ever means "not
+// seeded yet" — the seed can never resurrect something she removed.
+async function ensureGoalsTable(env) {
+  if (!env || !env.DB) return;
+  await env.DB.batch([
+    env.DB.prepare(GOALS_TABLE_SQL),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_goals_monthly ON goals(is_monthly_target)'),
+  ]);
+  const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM goals').first();
+  if (row && row.n === 0) {
+    await ensureTargetsTable(env);
+    const t = await env.DB.prepare(
+      `SELECT * FROM targets
+       ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date ASC, id ASC LIMIT 1`
+    ).first();
+    const seed = t || TARGET_SEED[0];
+    const ts = nowISO();
+    await env.DB.prepare(
+      'INSERT INTO goals (title, eyebrow, detail, due_date, milestone_date, current, total, is_monthly_target, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+      .bind(
+        seed.label, GOAL_SEED_EYEBROW, seed.detail || '', seed.due_date || null, null,
+        seed.current ?? 0, seed.total ?? 0, 1, 'Nayden', ts, ts
+      )
+      .run();
+  }
+}
+
 // ---- ./functions/api/auth.js ----
 // POST /api/auth — body { passcode, actor }
 // On a passcode match, sets an HttpOnly session cookie whose value is a
@@ -435,8 +525,9 @@ async function hLogoutPost() {
 // GET /api/state — everything the SPA needs in one call:
 // open tasks + latest 50 done, latest digest in full, digest index,
 // deadlines sorted by date, latest 30 activity rows, every daily
-// report from the last 7 days, all projects, all targets, the latest
-// 50 captures, all people, and events from the last 7 days onward.
+// report from the last 7 days, all projects, all goals, the target
+// derived from the flagged goal, the latest 50 captures, all people,
+// and events from the last 7 days onward.
 
 async function hStateGet({ env }) {
   await ensureReportsTable(env);
@@ -445,6 +536,7 @@ async function hStateGet({ env }) {
   await ensureCapturesTable(env);
   await ensurePeopleTable(env);
   await ensureEventsTable(env);
+  await ensureGoalsTable(env);
 
   const open = await env.DB.prepare(
     `SELECT * FROM tasks WHERE status != 'done'
@@ -488,12 +580,19 @@ async function hStateGet({ env }) {
      ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, id ASC`
   ).all();
 
-  // Targets: earliest due first (undated last) — the first row is the one
-  // the Today banner shows.
-  const targets = await env.DB.prepare(
-    `SELECT * FROM targets
-     ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date ASC, id ASC`
+  // Goals: the flagged monthly target first, then by due date (undated
+  // last) — the Goals view renders them in this order.
+  const goals = await env.DB.prepare(
+    `SELECT * FROM goals
+     ORDER BY is_monthly_target DESC, CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date ASC, id ASC`
   ).all();
+
+  // Targets: derived from the flagged goal — the goals table is the
+  // single source of truth, and this keeps the target shape the Today
+  // banner and older API callers have always read. The derived row
+  // carries the goal's id.
+  const flagged = (goals.results || []).find((g) => Number(g.is_monthly_target) === 1) || null;
+  const derivedTarget = goalAsTarget(flagged);
 
   // Captures: newest first, capped at 50 — enough for the badge count and
   // the Inbox list without shipping the whole archive.
@@ -522,7 +621,8 @@ async function hStateGet({ env }) {
     activity: activity.results || [],
     reports: reports.results || [],
     projects: projects.results || [],
-    targets: targets.results || [],
+    goals: goals.results || [],
+    targets: derivedTarget ? [derivedTarget] : [],
     captures: captures.results || [],
     people: people.results || [],
     events: events.results || [],
@@ -933,11 +1033,14 @@ async function hProjectPatch({ request, env, params }) {
 }
 
 // ---- ./functions/api/targets.js ----
-// POST /api/targets — add a monthly target.
+// POST /api/targets — kept for API compatibility. The monthly target
+// now lives in the goals table as the flagged goal; this writes through
+// to that goal (creating it, flagged, when none exists) and answers in
+// the target shape.
 // Body: { label (required), detail, current, total, due_date, actor }
 
 async function hTargetsPost({ request, env }) {
-  await ensureTargetsTable(env);
+  await ensureGoalsTable(env);
 
   const body = await parseBody(request);
   if (!body) return err('Body must be valid JSON.', 400);
@@ -955,31 +1058,46 @@ async function hTargetsPost({ request, env }) {
 
   const actor = getActor(request, body);
   const ts = nowISO();
-  const result = await env.DB.prepare(
-    'INSERT INTO targets (label, detail, current, total, due_date, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  )
-    .bind(label, cleanStr(body.detail, 500), current, total, dueDate, actor, ts, ts)
-    .run();
+  const detail = cleanStr(body.detail, 500);
+
+  const existing = await flaggedGoal(env);
+  let goal;
+  if (existing) {
+    await env.DB.prepare(
+      'UPDATE goals SET title = ?, detail = ?, current = ?, total = ?, due_date = ?, updated_at = ? WHERE id = ?'
+    )
+      .bind(label, detail, current, total, dueDate, ts, existing.id)
+      .run();
+    goal = await env.DB.prepare('SELECT * FROM goals WHERE id = ?').bind(existing.id).first();
+  } else {
+    const result = await env.DB.prepare(
+      'INSERT INTO goals (title, eyebrow, detail, due_date, milestone_date, current, total, is_monthly_target, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+      .bind(label, '', detail, dueDate, null, current, total, 1, actor, ts, ts)
+      .run();
+    goal = await env.DB.prepare('SELECT * FROM goals WHERE id = ?')
+      .bind(result.meta.last_row_id)
+      .first();
+  }
 
   await writeActivity(env, { actor, action: 'target_added', note: label });
 
-  const target = await env.DB.prepare('SELECT * FROM targets WHERE id = ?')
-    .bind(result.meta.last_row_id)
-    .first();
-  return json({ target }, 201);
+  return json({ target: goalAsTarget(goal) }, 201);
 }
 
 // ---- ./functions/api/targets/[id].js ----
-// PATCH /api/targets/:id — partial update of label, detail, current,
-// total and due_date.
+// PATCH /api/targets/:id — kept for API compatibility. The id is a
+// goal's id (the only id state.targets ever exposes is the flagged
+// goal's); the update writes through to that goal. Addressing a goal
+// as the target makes it the monthly target.
 
 async function hTargetPatch({ request, env, params }) {
-  await ensureTargetsTable(env);
+  await ensureGoalsTable(env);
 
   const id = Number(params.id);
   if (!Number.isInteger(id) || id <= 0) return err('Invalid target id.', 400);
 
-  const existing = await env.DB.prepare('SELECT * FROM targets WHERE id = ?').bind(id).first();
+  const existing = await env.DB.prepare('SELECT * FROM goals WHERE id = ?').bind(id).first();
   if (!existing) return err('Target not found.', 404);
 
   const body = await parseBody(request);
@@ -990,7 +1108,7 @@ async function hTargetPatch({ request, env, params }) {
   if ('label' in body) {
     const label = cleanStr(body.label, 200).trim();
     if (!label) return err('label cannot be empty.', 400);
-    next.label = label;
+    next.title = label;
   }
   if ('detail' in body) next.detail = cleanStr(body.detail, 500);
   if ('current' in body) {
@@ -1010,16 +1128,18 @@ async function hTargetPatch({ request, env, params }) {
   }
 
   await env.DB.prepare(
-    'UPDATE targets SET label = ?, detail = ?, current = ?, total = ?, due_date = ?, updated_at = ? WHERE id = ?'
+    'UPDATE goals SET title = ?, detail = ?, current = ?, total = ?, due_date = ?, is_monthly_target = 1, updated_at = ? WHERE id = ?'
   )
-    .bind(next.label, next.detail, next.current, next.total, next.due_date, nowISO(), id)
+    .bind(next.title, next.detail, next.current, next.total, next.due_date, nowISO(), id)
     .run();
+  // Exactly one monthly target.
+  await env.DB.prepare('UPDATE goals SET is_monthly_target = 0 WHERE id != ?').bind(id).run();
 
   const actor = getActor(request, body);
-  await writeActivity(env, { actor, action: 'target_updated', note: next.label });
+  await writeActivity(env, { actor, action: 'target_updated', note: next.title });
 
-  const target = await env.DB.prepare('SELECT * FROM targets WHERE id = ?').bind(id).first();
-  return json({ target });
+  const goal = await env.DB.prepare('SELECT * FROM goals WHERE id = ?').bind(id).first();
+  return json({ target: goalAsTarget(goal) });
 }
 
 // ---- ./functions/api/captures.js ----
@@ -1242,6 +1362,127 @@ async function hEventPatch({ request, env, params }) {
   return json({ event });
 }
 
+// ---- ./functions/api/goals.js ----
+// POST /api/goals — add a goal.
+// Body: { title (required), eyebrow, detail, due_date, milestone_date,
+//         current, total, is_monthly_target, actor }
+// Progress figures are optional: current/total stay null when not given.
+// Flagging the new goal as the monthly target unflags every other goal.
+
+async function hGoalsPost({ request, env }) {
+  await ensureGoalsTable(env);
+
+  const body = await parseBody(request);
+  if (!body) return err('Body must be valid JSON.', 400);
+
+  const title = cleanStr(body.title, 300).trim();
+  if (!title) return err('title is required.', 400);
+
+  const dueDate = validDate(body.due_date);
+  if (dueDate === undefined) return err('due_date must be an ISO date (YYYY-MM-DD).', 400);
+  const milestoneDate = validDate(body.milestone_date);
+  if (milestoneDate === undefined) return err('milestone_date must be an ISO date (YYYY-MM-DD).', 400);
+
+  const current = validNullableCount(body.current);
+  if (current === undefined) return err('current must be a whole number, 0 or more.', 400);
+  const total = validNullableCount(body.total);
+  if (total === undefined) return err('total must be a whole number, 0 or more.', 400);
+
+  const isMonthly = body.is_monthly_target ? 1 : 0;
+
+  const actor = getActor(request, body);
+  const ts = nowISO();
+  const result = await env.DB.prepare(
+    'INSERT INTO goals (title, eyebrow, detail, due_date, milestone_date, current, total, is_monthly_target, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  )
+    .bind(
+      title, cleanStr(body.eyebrow, 120), cleanStr(body.detail, 500),
+      dueDate, milestoneDate, current, total, isMonthly, actor, ts, ts
+    )
+    .run();
+
+  const id = result.meta.last_row_id;
+  if (isMonthly) {
+    // Exactly one monthly target: flagging this goal unflags the rest.
+    await env.DB.prepare('UPDATE goals SET is_monthly_target = 0 WHERE id != ?').bind(id).run();
+  }
+
+  await writeActivity(env, { actor, action: 'goal_added', note: title });
+
+  const goal = await env.DB.prepare('SELECT * FROM goals WHERE id = ?').bind(id).first();
+  return json({ goal }, 201);
+}
+
+// ---- ./functions/api/goals/[id].js ----
+// PATCH /api/goals/:id — partial update of title, eyebrow, detail,
+// due_date, milestone_date, current, total and is_monthly_target.
+// Setting is_monthly_target = 1 unflags every other goal: exactly one
+// goal is the monthly target at a time.
+
+async function hGoalPatch({ request, env, params }) {
+  await ensureGoalsTable(env);
+
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) return err('Invalid goal id.', 400);
+
+  const existing = await env.DB.prepare('SELECT * FROM goals WHERE id = ?').bind(id).first();
+  if (!existing) return err('Goal not found.', 404);
+
+  const body = await parseBody(request);
+  if (!body) return err('Body must be valid JSON.', 400);
+
+  const next = { ...existing };
+
+  if ('title' in body) {
+    const title = cleanStr(body.title, 300).trim();
+    if (!title) return err('title cannot be empty.', 400);
+    next.title = title;
+  }
+  if ('eyebrow' in body) next.eyebrow = cleanStr(body.eyebrow, 120);
+  if ('detail' in body) next.detail = cleanStr(body.detail, 500);
+  if ('due_date' in body) {
+    const dueDate = validDate(body.due_date);
+    if (dueDate === undefined) return err('due_date must be an ISO date (YYYY-MM-DD).', 400);
+    next.due_date = dueDate;
+  }
+  if ('milestone_date' in body) {
+    const milestoneDate = validDate(body.milestone_date);
+    if (milestoneDate === undefined) return err('milestone_date must be an ISO date (YYYY-MM-DD).', 400);
+    next.milestone_date = milestoneDate;
+  }
+  if ('current' in body) {
+    const current = validNullableCount(body.current);
+    if (current === undefined) return err('current must be a whole number, 0 or more.', 400);
+    next.current = current;
+  }
+  if ('total' in body) {
+    const total = validNullableCount(body.total);
+    if (total === undefined) return err('total must be a whole number, 0 or more.', 400);
+    next.total = total;
+  }
+  if ('is_monthly_target' in body) next.is_monthly_target = body.is_monthly_target ? 1 : 0;
+
+  await env.DB.prepare(
+    'UPDATE goals SET title = ?, eyebrow = ?, detail = ?, due_date = ?, milestone_date = ?, current = ?, total = ?, is_monthly_target = ?, updated_at = ? WHERE id = ?'
+  )
+    .bind(
+      next.title, next.eyebrow, next.detail, next.due_date, next.milestone_date,
+      next.current, next.total, next.is_monthly_target, nowISO(), id
+    )
+    .run();
+
+  if (Number(next.is_monthly_target) === 1) {
+    // Exactly one monthly target: flagging this goal unflags the rest.
+    await env.DB.prepare('UPDATE goals SET is_monthly_target = 0 WHERE id != ?').bind(id).run();
+  }
+
+  const actor = getActor(request, body);
+  await writeActivity(env, { actor, action: 'goal_updated', note: next.title });
+
+  const goal = await env.DB.prepare('SELECT * FROM goals WHERE id = ?').bind(id).first();
+  return json({ goal });
+}
+
 const INDEX_HTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -1402,14 +1643,6 @@ textarea { resize: vertical; }
 .brand-mark svg { width: 27px; height: 27px; }
 .brand-name { font-size: 1.24rem; font-weight: 800; letter-spacing: -0.02em; color: var(--deep); }
 
-.side-label {
-  margin: 1rem 0.35rem 0.4rem;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
 .tabs { display: flex; flex-direction: column; gap: 0.2rem; }
 .tab {
   display: flex;
@@ -1432,28 +1665,6 @@ textarea { resize: vertical; }
 .tab:hover { background: rgba(255, 254, 250, 0.65); color: var(--ink); }
 .tab.active { background: var(--green); color: #fff; font-weight: 600; box-shadow: 0 2px 8px rgba(25, 60, 46, 0.25); }
 .tab.active:hover { background: var(--deep); color: #fff; }
-
-.project-nav { display: flex; flex-direction: column; gap: 0.1rem; }
-.project-nav-item {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  width: 100%;
-  padding: 0.42rem 0.75rem;
-  background: none;
-  border: none;
-  border-radius: 10px;
-  font-family: inherit;
-  font-size: 0.92rem;
-  font-weight: 500;
-  color: var(--ink-soft);
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.project-nav-item:hover { background: rgba(255, 254, 250, 0.65); color: var(--ink); }
-.project-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; }
-.project-nav-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: 0.55rem; padding-top: 0.9rem; }
 .actor-card {
@@ -1712,12 +1923,6 @@ main {
 .ti-title { font-weight: 600; font-size: 0.9rem; line-height: 1.3; }
 .ti-sub { color: var(--muted); font-size: 0.78rem; margin-top: 0.1rem; }
 
-/* ---------- inbox (captures) ---------- */
-.capture-card { margin-bottom: 0.7rem; }
-.capture-body { white-space: pre-wrap; font-size: 0.94rem; word-break: break-word; }
-.capture-meta { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; margin-top: 0.6rem; }
-.capture-card.filed { opacity: 0.55; }
-.filed-head { margin: 1.2rem 0 0.6rem; font-size: 0.95rem; }
 
 /* ---------- follow-ups (people) ---------- */
 .person-row {
@@ -1748,9 +1953,20 @@ main {
 }
 .channel-chip { background: var(--sage-soft); color: var(--ink-soft); flex: 0 0 auto; }
 
-/* ---------- monthly target (projects view) ---------- */
-.target-summary-label { font-weight: 700; font-size: 1.02rem; }
-.target-summary-progress { margin-top: 0.3rem; color: var(--ink-soft); }
+/* ---------- goals ---------- */
+.goal-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; align-items: stretch; }
+@media (max-width: 1250px) { .goal-grid { grid-template-columns: repeat(2, 1fr); } }
+.goal-card { margin-bottom: 0; cursor: pointer; display: flex; flex-direction: column; transition: box-shadow 0.15s ease, border-color 0.15s ease; }
+.goal-card:hover { box-shadow: var(--shadow-lift); border-color: #d6d6c2; }
+.goal-card .eyebrow { margin-bottom: 0.55rem; }
+.goal-title { margin: 0 0 0.55rem; font-size: 1.42rem; font-weight: 800; letter-spacing: -0.015em; line-height: 1.22; color: var(--ink); }
+.goal-detail { margin: 0 0 1.1rem; color: var(--ink-soft); font-size: 0.92rem; }
+.goal-progress-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-top: auto; color: var(--ink-soft); font-size: 0.88rem; }
+.goal-bar { height: 6px; margin-top: 0.5rem; background: var(--panel); border-radius: 999px; overflow: hidden; }
+.goal-bar span { display: block; height: 100%; background: #7d8c6f; border-radius: 999px; }
+.goal-chip-row { margin-top: auto; }
+.checkbox-label { display: flex; align-items: center; gap: 0.55rem; font-size: 0.9rem; font-weight: 500; color: var(--ink); cursor: pointer; }
+.checkbox-label input { width: auto; margin: 0; }
 
 /* ---------- chips ---------- */
 .chip {
@@ -1984,14 +2200,6 @@ main {
 .deadline-notes { color: var(--ink-soft); font-size: 0.86rem; }
 .past { opacity: 0.55; }
 
-/* ---------- projects ---------- */
-.project-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
-.project-card { margin-bottom: 0; cursor: pointer; transition: box-shadow 0.15s ease, border-color 0.15s ease; }
-.project-card:hover { box-shadow: var(--shadow-lift); border-color: #d6d6c2; }
-.project-card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.4rem; }
-.project-name { margin: 0; font-size: 1.05rem; font-weight: 700; }
-.project-desc { margin: 0; color: var(--ink-soft); font-size: 0.9rem; }
-
 /* ---------- reports ---------- */
 .reports-col { max-width: 880px; margin: 0 auto; width: 100%; }
 .report-hint { margin: 0 0 0.4rem; }
@@ -2081,7 +2289,6 @@ main {
   .brand { padding: 0; }
   .tabs { flex-direction: row; flex-wrap: nowrap; overflow-x: auto; flex: 1 1 auto; padding-bottom: 0.15rem; }
   .tab { width: auto; white-space: nowrap; padding: 0.5rem 0.65rem; }
-  #projectNavGroup { display: none; }
   .sidebar-foot {
     margin-top: 0;
     padding-top: 0;
@@ -2097,7 +2304,7 @@ main {
   .board { grid-template-columns: 1fr; }
   .column { min-height: 0; }
   .view-title { font-size: 1.65rem; }
-  .project-list { grid-template-columns: 1fr; }
+  .goal-grid { grid-template-columns: 1fr; }
 }
 
 </style>
@@ -2136,11 +2343,6 @@ main {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.8"/><rect x="13" y="4" width="7" height="7" rx="1.8"/><rect x="4" y="13" width="7" height="7" rx="1.8"/><rect x="13" y="13" width="7" height="7" rx="1.8"/></svg>
           <span>Today</span>
         </button>
-        <button data-view="inbox" class="tab">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 13.6 5.7 6.7A2 2 0 0 1 7.6 5.3h8.8a2 2 0 0 1 1.9 1.4l2.2 6.9v3a1.9 1.9 0 0 1-1.9 1.9H5.4a1.9 1.9 0 0 1-1.9-1.9z"/><path d="M3.5 13.6h5.2a3.3 3.3 0 0 0 6.6 0h5.2"/></svg>
-          <span>Inbox</span>
-          <span class="tab-badge hidden" id="inboxBadge">0</span>
-        </button>
         <button data-view="board" class="tab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="m8.7 12.3 2.3 2.3 4.3-4.8"/></svg>
           <span>My tasks</span>
@@ -2149,13 +2351,13 @@ main {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.8h17"/><path d="M8 3v3.6M16 3v3.6"/></svg>
           <span>Calendar</span>
         </button>
+        <button data-view="goals" class="tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="4.7"/><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/></svg>
+          <span>Goals</span>
+        </button>
         <button data-view="deadlines" class="tab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 21.5v-17"/><path d="M5.5 5c4.6-2.4 7.2 2 12.5.2v9.4c-5.3 1.8-7.9-2.6-12.5-.2"/></svg>
           <span>Deadlines</span>
-        </button>
-        <button data-view="projects" class="tab">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7A1.8 1.8 0 0 1 5.3 5.2h3.9L11.4 8h7.3A1.8 1.8 0 0 1 20.5 9.8v7.4a1.8 1.8 0 0 1-1.8 1.8H5.3A1.8 1.8 0 0 1 3.5 17.2z"/></svg>
-          <span>Projects</span>
         </button>
         <button data-view="reports" class="tab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3.5h6.8L18.5 8v11a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5z"/><path d="M13.8 3.5V8h4.7"/><path d="M8.7 12.3h6.6M8.7 15.8h6.6"/></svg>
@@ -2170,11 +2372,6 @@ main {
           <span>Follow-ups</span>
         </button>
       </nav>
-
-      <div id="projectNavGroup" class="hidden">
-        <p class="side-label">Projects</p>
-        <div id="projectNav" class="project-nav"></div>
-      </div>
 
       <div class="sidebar-foot">
         <div class="actor-card">
@@ -2274,24 +2471,6 @@ main {
       </div>
     </section>
 
-    <!-- ============ INBOX ============ -->
-    <section id="view-inbox" class="view hidden">
-      <div class="view-head">
-        <div>
-          <p class="eyebrow">Notes, links, half-formed thoughts</p>
-          <h1 class="view-title">Inbox</h1>
-        </div>
-      </div>
-      <form id="captureForm" class="card capture-form">
-        <label>Drop something in
-          <textarea id="captureBody" rows="3" required placeholder="Drop a note, a link, a half-formed thought…"></textarea>
-        </label>
-        <p class="form-error" id="captureError"></p>
-        <button type="submit" class="btn btn-primary">Add to inbox</button>
-      </form>
-      <div id="captureList"></div>
-    </section>
-
     <!-- ============ TASKS (BOARD) ============ -->
     <section id="view-board" class="view hidden">
       <div class="view-head">
@@ -2362,6 +2541,20 @@ main {
       <p class="muted">A caramel chip is a deadline, green dots are open tasks due that day — click any day to see its detail right here.</p>
     </section>
 
+    <!-- ============ GOALS ============ -->
+    <section id="view-goals" class="view hidden">
+      <div class="view-head">
+        <div>
+          <p class="eyebrow" id="goalsEyebrow"></p>
+          <h1 class="view-title">Goals</h1>
+        </div>
+        <div class="head-actions">
+          <button id="newGoalBtn" class="btn btn-primary">Add goal</button>
+        </div>
+      </div>
+      <div id="goalList" class="goal-grid"></div>
+    </section>
+
     <!-- ============ DEADLINES ============ -->
     <section id="view-deadlines" class="view hidden">
       <div class="view-head">
@@ -2374,28 +2567,6 @@ main {
         </div>
       </div>
       <div id="deadlineList"></div>
-    </section>
-
-    <!-- ============ PROJECTS ============ -->
-    <section id="view-projects" class="view hidden">
-      <div class="view-head">
-        <div>
-          <p class="eyebrow">Standing areas of work</p>
-          <h1 class="view-title">Projects</h1>
-        </div>
-        <div class="head-actions">
-          <button id="newProjectBtn" class="btn btn-primary">Add project</button>
-        </div>
-      </div>
-      <div class="card target-card">
-        <div class="card-head">
-          <h2>Monthly target</h2>
-          <button type="button" class="btn btn-ghost btn-small" id="editTargetBtn">Edit</button>
-        </div>
-        <div id="targetSummary"></div>
-      </div>
-      <div id="projectList" class="project-list"></div>
-      <p class="muted board-hint">Projects are their own section, like Deadlines. Tasks are not filed under projects — they stay on the board.</p>
     </section>
 
     <!-- ============ REPORTS ============ -->
@@ -2454,12 +2625,11 @@ main {
         <h3>How the board is organised</h3>
         <ul>
           <li><strong>Today</strong> — the morning brief, the Deadlines card, the monthly target, then the day's Tasks and Schedule.</li>
-          <li><strong>Inbox</strong> — raw captures: notes, links, half-formed thoughts, dropped by anyone. Nayden triages them in the morning sync and marks them filed.</li>
           <li><strong>My tasks</strong> — the board: To Do / In Progress / Waiting on Jesutofunmi / Done.</li>
           <li><strong>Calendar</strong> — events, deadlines and task due dates on a month grid.</li>
+          <li><strong>Goals</strong> — the outcomes she is aiming at, each with its progress or its next milestone. Projects are the work containers underneath them. One goal is flagged as the monthly target — that is the one the Today banner shows.</li>
           <li><strong>Deadlines</strong> — the dated commitments. If you learn a new deadline, add it.</li>
           <li><strong>Events</strong> — classes and sessions, with their times. Schedule only: an event is never a task and never a deadline.</li>
-          <li><strong>Projects</strong> — the standing areas of work, and the monthly target shown on Today. Projects are their own section; tasks are not filed under them.</li>
           <li><strong>Reports</strong> — one daily report per person. See &ldquo;Daily reports&rdquo; below.</li>
           <li><strong>Follow-ups</strong> — the people Jesutofunmi is keeping in touch with, with the next step for each. If you learn someone should be contacted, add them here.</li>
           <li><strong>The Brief</strong> — Nayden posts the morning brief through the API and it appears as the green Brief panel on Today. There is no separate brief page.</li>
@@ -2569,50 +2739,30 @@ main {
   </form>
 </div>
 
-<!-- ============ PROJECT EDITOR ============ -->
-<div id="projectModal" class="modal hidden">
-  <form id="projectForm" class="modal-card">
+<!-- ============ GOAL EDITOR ============ -->
+<div id="goalModal" class="modal hidden">
+  <form id="goalForm" class="modal-card">
     <div class="modal-head">
-      <h2 id="projectFormTitle">Add project</h2>
-      <button type="button" class="btn btn-ghost btn-small" data-close="projectModal">&#10005;</button>
+      <h2 id="goalFormTitle">Add goal</h2>
+      <button type="button" class="btn btn-ghost btn-small" data-close="goalModal">&#10005;</button>
     </div>
-    <input type="hidden" id="projectId" />
-    <label>Name <input id="projectName" required maxlength="200" /></label>
-    <label>Description <textarea id="projectDescription" rows="4"></textarea></label>
-    <label>Status
-      <select id="projectStatus">
-        <option value="active">Active</option>
-        <option value="paused">Paused</option>
-        <option value="done">Done</option>
-      </select>
-    </label>
-    <p class="form-error" id="projectError"></p>
-    <div class="modal-actions">
-      <button type="button" class="btn btn-ghost" data-close="projectModal">Cancel</button>
-      <button type="submit" class="btn btn-primary">Save project</button>
-    </div>
-  </form>
-</div>
-
-<!-- ============ TARGET EDITOR ============ -->
-<div id="targetModal" class="modal hidden">
-  <form id="targetForm" class="modal-card">
-    <div class="modal-head">
-      <h2 id="targetFormTitle">Monthly target</h2>
-      <button type="button" class="btn btn-ghost btn-small" data-close="targetModal">&#10005;</button>
-    </div>
-    <input type="hidden" id="targetId" />
-    <label>Target <input id="mtLabel" required maxlength="200" placeholder="Publish 4 hardware essays" /></label>
-    <label>Detail <input id="mtDetail" maxlength="500" placeholder="The Hardware Brief" /></label>
+    <input type="hidden" id="goalId" />
+    <label>Goal <input id="goalTitle" required maxlength="300" placeholder="Publish 4 hardware essays" /></label>
+    <label>Eyebrow <input id="goalEyebrow" maxlength="120" placeholder="November · Voice" /></label>
+    <label>Detail <input id="goalDetail" maxlength="500" placeholder="The Hardware Brief" /></label>
     <div class="form-row">
-      <label>Done so far <input id="mtCurrent" type="number" min="0" step="1" /></label>
-      <label>Out of <input id="mtTotal" type="number" min="0" step="1" /></label>
-      <label>Due <input id="mtDue" type="date" /></label>
+      <label>Due <input id="goalDue" type="date" /></label>
+      <label>Next milestone <input id="goalMilestone" type="date" /></label>
     </div>
-    <p class="form-error" id="mtError"></p>
+    <div class="form-row">
+      <label>Done so far <input id="goalCurrent" type="number" min="0" step="1" /></label>
+      <label>Out of <input id="goalTotal" type="number" min="0" step="1" /></label>
+    </div>
+    <label class="checkbox-label"><input type="checkbox" id="goalMonthly" /> This is the monthly target</label>
+    <p class="form-error" id="goalError"></p>
     <div class="modal-actions">
-      <button type="button" class="btn btn-ghost" data-close="targetModal">Cancel</button>
-      <button type="submit" class="btn btn-primary">Save target</button>
+      <button type="button" class="btn btn-ghost" data-close="goalModal">Cancel</button>
+      <button type="submit" class="btn btn-primary">Save goal</button>
     </div>
   </form>
 </div>
@@ -3138,121 +3288,133 @@ $('#weekStrip').addEventListener('click', (e) => {
   if (btn) selectWeekDay(btn.dataset.weekDate);
 });
 
-/* ================= monthly target ================= */
+/* ================= goals & the monthly target ================= */
 
-function activeTarget() {
-  const targets = (state && state.targets) || [];
-  return targets.length ? targets[0] : null; // state orders earliest due first
+// The monthly target is a goal like any other — the one flagged
+// is_monthly_target. The Today banner reads it from here, and the
+// Goals section is its only editor.
+function activeGoal() {
+  const goals = (state && state.goals) || [];
+  return goals.find((g) => Number(g.is_monthly_target) === 1) || null;
 }
 
-function renderTarget() {
-  const target = activeTarget();
+function renderMonthlyTarget() {
+  const goal = activeGoal();
   const banner = $('#targetBanner');
-  if (target) {
+  if (goal) {
     banner.classList.remove('hidden');
-    const dueLabel = target.due_date
-      ? parseDay(target.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    const dueLabel = goal.due_date
+      ? parseDay(goal.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       : 'no date set';
     $('#targetEyebrow').textContent = \`Monthly target · \${dueLabel}\`;
-    $('#targetLabel').textContent = target.label;
-    $('#targetProgress').textContent = \`\${target.current} / \${target.total} published\`;
+    $('#targetLabel').textContent = goal.title;
+    $('#targetProgress').textContent = goal.total !== null && goal.total !== undefined
+      ? \`\${goal.current ?? 0} / \${goal.total} published\`
+      : '';
   } else {
     banner.classList.add('hidden');
   }
-  $('#targetSummary').innerHTML = target
-    ? \`<div class="target-summary-label">\${esc(target.label)}</div>
-       \${target.detail ? \`<div class="muted">\${esc(target.detail)}</div>\` : ''}
-       <div class="target-summary-progress">\${target.current} / \${target.total} published\${target.due_date ? \` · due \${fmtDate(target.due_date)}\` : ''}</div>\`
-    : '<p class="muted">No monthly target set.</p>';
-  $('#editTargetBtn').textContent = target ? 'Edit' : 'Set target';
 }
 
-$('#targetBanner').addEventListener('click', () => showView('projects'));
+$('#targetBanner').addEventListener('click', () => showView('goals'));
 
-function openTargetEditor() {
-  const target = activeTarget();
-  $('#targetFormTitle').textContent = target ? 'Edit monthly target' : 'Set monthly target';
-  $('#targetId').value = target ? target.id : '';
-  $('#mtLabel').value = target ? target.label : '';
-  $('#mtDetail').value = target ? target.detail || '' : '';
-  $('#mtCurrent').value = target ? target.current : 0;
-  $('#mtTotal').value = target ? target.total : 0;
-  $('#mtDue').value = target && target.due_date ? target.due_date : '';
-  $('#mtError').textContent = '';
-  openModal('targetModal');
+// A goal card's footer: a progress row when the goal carries a total,
+// otherwise a milestone/due chip — rose when the nearest of the two
+// dates is within 3 days (and not past), grey further out. When the
+// goal has neither a total nor a date, there is no footer.
+function goalFooterHtml(g) {
+  if (g.total !== null && g.total !== undefined) {
+    const total = Number(g.total);
+    const current = Number(g.current ?? 0);
+    const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+    const width = total > 0 ? Math.min(100, Math.max(0, (current / total) * 100)) : 0;
+    return \`
+      <div class="goal-progress-meta"><span>\${current} of \${total}</span><span>\${pct}%</span></div>
+      <div class="goal-bar"><span style="width:\${width}%"></span></div>\`;
+  }
+  const dates = [g.milestone_date, g.due_date].filter(Boolean).sort();
+  if (dates.length) {
+    const days = daysUntil(dates[0]);
+    if (days >= 0 && days <= 3) {
+      const label = days === 0 ? 'Due today' : days === 1 ? 'Tomorrow' : \`\${days} days remaining\`;
+      return \`<div class="goal-chip-row"><span class="chip rel-rose">\${label}</span></div>\`;
+    }
+    if (g.milestone_date) {
+      return \`<div class="goal-chip-row"><span class="chip rel-grey">Next milestone · \${fmtDate(g.milestone_date)}</span></div>\`;
+    }
+    return \`<div class="goal-chip-row"><span class="chip rel-grey">Due \${fmtDate(g.due_date)}</span></div>\`;
+  }
+  return '';
 }
-$('#editTargetBtn').addEventListener('click', openTargetEditor);
 
-$('#targetForm').addEventListener('submit', async (e) => {
+function renderGoals() {
+  const goals = (state && state.goals) || [];
+  const now = new Date();
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'short' });
+  const monthName = now.toLocaleDateString('en-US', { month: 'short' });
+  $('#goalsEyebrow').textContent = \`\${weekday}, \${monthName} \${now.getDate()}\`;
+  $('#goalList').innerHTML = goals.length
+    ? goals.map((g) => {
+        const detail = g.detail
+          ? esc(g.detail)
+          : g.due_date ? \`Due \${fmtDate(g.due_date)}\` : '';
+        return \`
+        <article class="card goal-card" data-goal-id="\${g.id}">
+          \${g.eyebrow ? \`<p class="eyebrow">\${esc(g.eyebrow)}</p>\` : ''}
+          <h3 class="goal-title">\${esc(g.title)}</h3>
+          \${detail ? \`<p class="goal-detail">\${detail}</p>\` : ''}
+          \${goalFooterHtml(g)}
+        </article>\`;
+      }).join('')
+    : '<p class="muted">No goals yet.</p>';
+
+  document.querySelectorAll('[data-goal-id]').forEach((card) => {
+    card.addEventListener('click', () => {
+      const g = goals.find((x) => x.id === Number(card.dataset.goalId));
+      if (g) openGoalEditor(g);
+    });
+  });
+}
+
+function openGoalEditor(g) {
+  $('#goalFormTitle').textContent = g ? 'Edit goal' : 'Add goal';
+  $('#goalId').value = g ? g.id : '';
+  $('#goalTitle').value = g ? g.title : '';
+  $('#goalEyebrow').value = g ? g.eyebrow || '' : '';
+  $('#goalDetail').value = g ? g.detail || '' : '';
+  $('#goalDue').value = g && g.due_date ? g.due_date : '';
+  $('#goalMilestone').value = g && g.milestone_date ? g.milestone_date : '';
+  $('#goalCurrent').value = g && g.current !== null && g.current !== undefined ? g.current : '';
+  $('#goalTotal').value = g && g.total !== null && g.total !== undefined ? g.total : '';
+  $('#goalMonthly').checked = g ? Number(g.is_monthly_target) === 1 : false;
+  $('#goalError').textContent = '';
+  openModal('goalModal');
+}
+$('#newGoalBtn').addEventListener('click', () => openGoalEditor(null));
+
+$('#goalForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  $('#mtError').textContent = '';
-  const id = $('#targetId').value;
+  $('#goalError').textContent = '';
+  const id = $('#goalId').value;
+  const numOrNull = (v) => (v === '' ? null : Number(v));
   const payload = {
-    label: $('#mtLabel').value.trim(),
-    detail: $('#mtDetail').value,
-    current: Number($('#mtCurrent').value || 0),
-    total: Number($('#mtTotal').value || 0),
-    due_date: $('#mtDue').value || null,
+    title: $('#goalTitle').value.trim(),
+    eyebrow: $('#goalEyebrow').value,
+    detail: $('#goalDetail').value,
+    due_date: $('#goalDue').value || null,
+    milestone_date: $('#goalMilestone').value || null,
+    current: numOrNull($('#goalCurrent').value),
+    total: numOrNull($('#goalTotal').value),
+    is_monthly_target: $('#goalMonthly').checked ? 1 : 0,
     actor,
   };
   try {
-    if (id) await api(\`/api/targets/\${id}\`, { method: 'PATCH', body: payload });
-    else await api('/api/targets', { method: 'POST', body: payload });
-    closeModal('targetModal');
+    if (id) await api(\`/api/goals/\${id}\`, { method: 'PATCH', body: payload });
+    else await api('/api/goals', { method: 'POST', body: payload });
+    closeModal('goalModal');
     await loadState();
   } catch (err) {
-    $('#mtError').textContent = err.message;
-  }
-});
-
-/* ================= inbox ================= */
-
-function renderInbox() {
-  const captures = (state && state.captures) || [];
-  const unfiled = captures.filter((c) => !Number(c.filed));
-  const filed = captures.filter((c) => Number(c.filed));
-  const badge = $('#inboxBadge');
-  badge.textContent = String(unfiled.length);
-  badge.classList.toggle('hidden', unfiled.length === 0);
-
-  const card = (c, isFiled) => \`
-    <div class="card capture-card\${isFiled ? ' filed' : ''}">
-      <div class="capture-body">\${esc(c.body)}</div>
-      <div class="capture-meta">
-        <span class="muted">\${esc(c.author)} · \${esc(fmtDateTime(c.created_at))}</span>
-        <button type="button" class="btn btn-ghost btn-small" data-file-capture="\${c.id}" data-filed="\${isFiled ? 1 : 0}">\${isFiled ? 'Move back to inbox' : 'Mark filed'}</button>
-      </div>
-    </div>\`;
-  $('#captureList').innerHTML =
-    (unfiled.length
-      ? unfiled.map((c) => card(c, false)).join('')
-      : '<p class="muted">Nothing waiting. Drop the next thought above.</p>') +
-    (filed.length ? '<h3 class="filed-head">Filed</h3>' + filed.map((c) => card(c, true)).join('') : '');
-}
-
-$('#captureForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  $('#captureError').textContent = '';
-  try {
-    await api('/api/captures', { method: 'POST', body: { body: $('#captureBody').value, actor } });
-    $('#captureBody').value = '';
-    await loadState();
-  } catch (err) {
-    $('#captureError').textContent = err.message;
-  }
-});
-
-$('#captureList').addEventListener('click', async (e) => {
-  const btn = e.target.closest('[data-file-capture]');
-  if (!btn) return;
-  try {
-    await api(\`/api/captures/\${btn.dataset.fileCapture}\`, {
-      method: 'PATCH',
-      body: { filed: btn.dataset.filed === '1' ? 0 : 1, actor },
-    });
-    await loadState();
-  } catch (err) {
-    alert(err.message);
+    $('#goalError').textContent = err.message;
   }
 });
 
@@ -3678,91 +3840,6 @@ $('#deadlineForm').addEventListener('submit', async (e) => {
   }
 });
 
-/* ================= projects ================= */
-
-const PROJECT_DOT_COLORS = ['#966a43', '#234d3b', '#c39a1d', '#7d8c6f', '#a34d3c', '#5b7a99'];
-
-function projectStatusChip(status) {
-  const map = {
-    active: ['status-active', 'Active'],
-    paused: ['status-paused', 'Paused'],
-    done: ['status-done', 'Done'],
-  };
-  const [cls, label] = map[status] || map.active;
-  return \`<span class="chip \${cls}">\${label}</span>\`;
-}
-
-function renderProjects() {
-  const projects = state.projects || [];
-
-  // Sidebar PROJECTS group: quiet dot-and-name rows, data-driven; the
-  // whole group hides when there are no projects.
-  const group = $('#projectNavGroup');
-  if (projects.length) {
-    group.classList.remove('hidden');
-    $('#projectNav').innerHTML = projects.map((p, i) => \`
-      <button type="button" class="project-nav-item" data-goto-projects>
-        <span class="project-dot" style="background:\${PROJECT_DOT_COLORS[i % PROJECT_DOT_COLORS.length]}"></span>
-        <span class="project-nav-name">\${esc(p.name)}</span>
-      </button>\`).join('');
-  } else {
-    group.classList.add('hidden');
-    $('#projectNav').innerHTML = '';
-  }
-
-  // The Projects view: one paper card per project; clicking opens the editor.
-  $('#projectList').innerHTML = projects.length
-    ? projects.map((p) => \`
-        <article class="card project-card" data-project-id="\${p.id}">
-          <div class="project-card-head"><h3 class="project-name">\${esc(p.name)}</h3>\${projectStatusChip(p.status)}</div>
-          \${p.description ? \`<p class="project-desc">\${esc(p.description)}</p>\` : ''}
-        </article>\`).join('')
-    : '<p class="muted">No projects yet.</p>';
-
-  document.querySelectorAll('[data-project-id]').forEach((card) => {
-    card.addEventListener('click', () => {
-      const p = projects.find((x) => x.id === Number(card.dataset.projectId));
-      if (p) openProjectEditor(p);
-    });
-  });
-}
-
-$('#projectNav').addEventListener('click', (e) => {
-  if (e.target.closest('[data-goto-projects]')) showView('projects');
-});
-
-function openProjectEditor(p) {
-  $('#projectFormTitle').textContent = p ? 'Edit project' : 'Add project';
-  $('#projectId').value = p ? p.id : '';
-  $('#projectName').value = p ? p.name : '';
-  $('#projectDescription').value = p ? p.description || '' : '';
-  $('#projectStatus').value = p ? p.status : 'active';
-  $('#projectError').textContent = '';
-  openModal('projectModal');
-}
-
-$('#newProjectBtn').addEventListener('click', () => openProjectEditor(null));
-
-$('#projectForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  $('#projectError').textContent = '';
-  const id = $('#projectId').value;
-  const payload = {
-    name: $('#projectName').value.trim(),
-    description: $('#projectDescription').value,
-    status: $('#projectStatus').value,
-    actor,
-  };
-  try {
-    if (id) await api(\`/api/projects/\${id}\`, { method: 'PATCH', body: payload });
-    else await api('/api/projects', { method: 'POST', body: payload });
-    closeModal('projectModal');
-    await loadState();
-  } catch (err) {
-    $('#projectError').textContent = err.message;
-  }
-});
-
 /* ================= reports ================= */
 
 const REPORT_AUTHORS = ['Jesutofunmi', 'Nayden', 'Claude', 'ChatGPT', 'Instinct'];
@@ -3871,12 +3948,11 @@ $('#reportForm').addEventListener('submit', async (e) => {
 
 function renderAll() {
   renderToday();
-  renderTarget();
-  renderInbox();
+  renderMonthlyTarget();
+  renderGoals();
   renderBoard();
   renderCalendar();
   renderDeadlines();
-  renderProjects();
   renderReports();
   renderFollowups();
   refreshReportForm();
@@ -3942,6 +4018,7 @@ export default {
         await ensureCapturesTable(env);
         await ensurePeopleTable(env);
         await ensureEventsTable(env);
+        await ensureGoalsTable(env);
         if (path === '/api/auth') {
           if (request.method !== 'POST') return err('Method not allowed.', 405);
           return await hAuthPost({ request, env });
@@ -3970,6 +4047,8 @@ export default {
         if ((m = path.match(/^\/api\/people\/(\d+)$/)) && request.method === 'PATCH') return await hPersonPatch({ request, env, params: { id: m[1] } });
         if (path === '/api/events' && request.method === 'POST') return await hEventsPost({ request, env });
         if ((m = path.match(/^\/api\/events\/(\d+)$/)) && request.method === 'PATCH') return await hEventPatch({ request, env, params: { id: m[1] } });
+        if (path === '/api/goals' && request.method === 'POST') return await hGoalsPost({ request, env });
+        if ((m = path.match(/^\/api\/goals\/(\d+)$/)) && request.method === 'PATCH') return await hGoalPatch({ request, env, params: { id: m[1] } });
         if (path === '/api/logout' && request.method === 'POST') return await hLogoutPost({ request, env });
         return err('Not found.', 404);
       } catch (e) {

@@ -38,6 +38,8 @@ const handlers = [
   ['./functions/api/people/[id].js', [['onRequestPatch', 'hPersonPatch']]],
   ['./functions/api/events.js', [['onRequestPost', 'hEventsPost']]],
   ['./functions/api/events/[id].js', [['onRequestPatch', 'hEventPatch']]],
+  ['./functions/api/goals.js', [['onRequestPost', 'hGoalsPost']]],
+  ['./functions/api/goals/[id].js', [['onRequestPatch', 'hGoalPatch']]],
 ];
 
 let handlerCode = '';
@@ -84,6 +86,7 @@ export default {
         await ensureCapturesTable(env);
         await ensurePeopleTable(env);
         await ensureEventsTable(env);
+        await ensureGoalsTable(env);
         if (path === '/api/auth') {
           if (request.method !== 'POST') return err('Method not allowed.', 405);
           return await hAuthPost({ request, env });
@@ -112,6 +115,8 @@ export default {
         if ((m = path.match(/^\\/api\\/people\\/(\\d+)$/)) && request.method === 'PATCH') return await hPersonPatch({ request, env, params: { id: m[1] } });
         if (path === '/api/events' && request.method === 'POST') return await hEventsPost({ request, env });
         if ((m = path.match(/^\\/api\\/events\\/(\\d+)$/)) && request.method === 'PATCH') return await hEventPatch({ request, env, params: { id: m[1] } });
+        if (path === '/api/goals' && request.method === 'POST') return await hGoalsPost({ request, env });
+        if ((m = path.match(/^\\/api\\/goals\\/(\\d+)$/)) && request.method === 'PATCH') return await hGoalPatch({ request, env, params: { id: m[1] } });
         if (path === '/api/logout' && request.method === 'POST') return await hLogoutPost({ request, env });
         return err('Not found.', 404);
       } catch (e) {

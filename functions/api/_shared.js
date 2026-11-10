@@ -381,3 +381,93 @@ export async function ensureEventsTable(env) {
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_events_date ON events(date)'),
   ]);
 }
+
+// Goals: the outcomes Jesutofunmi is aiming at — each carries progress
+// (current of total) or a next milestone. Goals are their own section,
+// distinct from Projects (the work containers underneath them). Exactly
+// one goal may be flagged is_monthly_target; that goal is what the
+// Today banner shows, and state.targets is derived from it (see
+// goalAsTarget) so the banner and the Goals section never diverge.
+export const GOALS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS goals (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  title             TEXT NOT NULL,
+  eyebrow           TEXT NOT NULL DEFAULT '',
+  detail            TEXT NOT NULL DEFAULT '',
+  due_date          TEXT,
+  milestone_date    TEXT,
+  current           INTEGER,
+  total             INTEGER,
+  is_monthly_target INTEGER NOT NULL DEFAULT 0,
+  created_by        TEXT DEFAULT '',
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL
+)`;
+
+// The eyebrow on the essays goal in her own Daybreak demo.
+export const GOAL_SEED_EYEBROW = 'November · Voice';
+
+// Like validCount, but empty input means "no number" (null) rather than
+// a fallback — a goal's progress figures are optional. Returns undefined
+// for anything that is not a non-negative integer.
+export function validNullableCount(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n > 100000) return undefined;
+  return n;
+}
+
+// The flagged goal dressed in the target fields: the shape
+// state.targets exposes and the /api/targets handlers answer with, so
+// the Today banner and older API callers read exactly what they read
+// before goals existed.
+export function goalAsTarget(goal) {
+  if (!goal) return null;
+  return {
+    id: goal.id,
+    label: goal.title,
+    detail: goal.detail,
+    current: goal.current,
+    total: goal.total,
+    due_date: goal.due_date,
+    created_by: goal.created_by,
+    created_at: goal.created_at,
+    updated_at: goal.updated_at,
+  };
+}
+
+export async function flaggedGoal(env) {
+  return env.DB.prepare(
+    'SELECT * FROM goals WHERE is_monthly_target = 1 ORDER BY id ASC LIMIT 1'
+  ).first();
+}
+
+// Self-migration, same pattern as the other tables. Seed-if-empty: the
+// one real goal moves in from the existing targets row (title, detail,
+// progress and due date copied across), flagged as the monthly target.
+// There is no delete for goals, so an empty table only ever means "not
+// seeded yet" — the seed can never resurrect something she removed.
+export async function ensureGoalsTable(env) {
+  if (!env || !env.DB) return;
+  await env.DB.batch([
+    env.DB.prepare(GOALS_TABLE_SQL),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_goals_monthly ON goals(is_monthly_target)'),
+  ]);
+  const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM goals').first();
+  if (row && row.n === 0) {
+    await ensureTargetsTable(env);
+    const t = await env.DB.prepare(
+      `SELECT * FROM targets
+       ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date ASC, id ASC LIMIT 1`
+    ).first();
+    const seed = t || TARGET_SEED[0];
+    const ts = nowISO();
+    await env.DB.prepare(
+      'INSERT INTO goals (title, eyebrow, detail, due_date, milestone_date, current, total, is_monthly_target, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+      .bind(
+        seed.label, GOAL_SEED_EYEBROW, seed.detail || '', seed.due_date || null, null,
+        seed.current ?? 0, seed.total ?? 0, 1, 'Nayden', ts, ts
+      )
+      .run();
+  }
+}

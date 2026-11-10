@@ -96,11 +96,26 @@ CREATE TABLE IF NOT EXISTS events (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS goals (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  title             TEXT NOT NULL,                -- the outcome, e.g. "Publish 4 hardware essays"
+  eyebrow           TEXT NOT NULL DEFAULT '',     -- e.g. "November · Voice"
+  detail            TEXT NOT NULL DEFAULT '',     -- e.g. "The Hardware Brief"
+  due_date          TEXT,                         -- ISO date YYYY-MM-DD or NULL
+  milestone_date    TEXT,                         -- next milestone, ISO date or NULL
+  current           INTEGER,                      -- progress so far; NULL when the goal has no count
+  total             INTEGER,                      -- progress denominator; NULL likewise
+  is_monthly_target INTEGER NOT NULL DEFAULT 0,   -- exactly one goal holds 1: the Today banner's goal
+  created_by        TEXT DEFAULT '',
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS activity (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id    INTEGER,                             -- NULL for digest/deadline events
   actor      TEXT NOT NULL,
-  action     TEXT NOT NULL,                       -- created | status_changed | updated | deleted | digest_posted | deadline_added | deadline_updated | deadline_deleted | report_posted | project_added | project_updated | target_added | target_updated | capture_added | capture_filed | capture_unfiled | person_added | person_updated | event_added | event_updated
+  action     TEXT NOT NULL,                       -- created | status_changed | updated | deleted | digest_posted | deadline_added | deadline_updated | deadline_deleted | report_posted | project_added | project_updated | target_added | target_updated | capture_added | capture_filed | capture_unfiled | person_added | person_updated | event_added | event_updated | goal_added | goal_updated
   note       TEXT DEFAULT '',
   created_at TEXT NOT NULL
 );
@@ -109,6 +124,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due);
 CREATE INDEX IF NOT EXISTS idx_deadlines_date ON deadlines(date);
 CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
+CREATE INDEX IF NOT EXISTS idx_goals_monthly ON goals(is_monthly_target);
 CREATE INDEX IF NOT EXISTS idx_activity_created ON activity(created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_date_author ON reports(date, author);
 CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(date);

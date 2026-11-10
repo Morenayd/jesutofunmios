@@ -489,121 +489,133 @@ $('#weekStrip').addEventListener('click', (e) => {
   if (btn) selectWeekDay(btn.dataset.weekDate);
 });
 
-/* ================= monthly target ================= */
+/* ================= goals & the monthly target ================= */
 
-function activeTarget() {
-  const targets = (state && state.targets) || [];
-  return targets.length ? targets[0] : null; // state orders earliest due first
+// The monthly target is a goal like any other — the one flagged
+// is_monthly_target. The Today banner reads it from here, and the
+// Goals section is its only editor.
+function activeGoal() {
+  const goals = (state && state.goals) || [];
+  return goals.find((g) => Number(g.is_monthly_target) === 1) || null;
 }
 
-function renderTarget() {
-  const target = activeTarget();
+function renderMonthlyTarget() {
+  const goal = activeGoal();
   const banner = $('#targetBanner');
-  if (target) {
+  if (goal) {
     banner.classList.remove('hidden');
-    const dueLabel = target.due_date
-      ? parseDay(target.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    const dueLabel = goal.due_date
+      ? parseDay(goal.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       : 'no date set';
     $('#targetEyebrow').textContent = `Monthly target · ${dueLabel}`;
-    $('#targetLabel').textContent = target.label;
-    $('#targetProgress').textContent = `${target.current} / ${target.total} published`;
+    $('#targetLabel').textContent = goal.title;
+    $('#targetProgress').textContent = goal.total !== null && goal.total !== undefined
+      ? `${goal.current ?? 0} / ${goal.total} published`
+      : '';
   } else {
     banner.classList.add('hidden');
   }
-  $('#targetSummary').innerHTML = target
-    ? `<div class="target-summary-label">${esc(target.label)}</div>
-       ${target.detail ? `<div class="muted">${esc(target.detail)}</div>` : ''}
-       <div class="target-summary-progress">${target.current} / ${target.total} published${target.due_date ? ` · due ${fmtDate(target.due_date)}` : ''}</div>`
-    : '<p class="muted">No monthly target set.</p>';
-  $('#editTargetBtn').textContent = target ? 'Edit' : 'Set target';
 }
 
-$('#targetBanner').addEventListener('click', () => showView('projects'));
+$('#targetBanner').addEventListener('click', () => showView('goals'));
 
-function openTargetEditor() {
-  const target = activeTarget();
-  $('#targetFormTitle').textContent = target ? 'Edit monthly target' : 'Set monthly target';
-  $('#targetId').value = target ? target.id : '';
-  $('#mtLabel').value = target ? target.label : '';
-  $('#mtDetail').value = target ? target.detail || '' : '';
-  $('#mtCurrent').value = target ? target.current : 0;
-  $('#mtTotal').value = target ? target.total : 0;
-  $('#mtDue').value = target && target.due_date ? target.due_date : '';
-  $('#mtError').textContent = '';
-  openModal('targetModal');
+// A goal card's footer: a progress row when the goal carries a total,
+// otherwise a milestone/due chip — rose when the nearest of the two
+// dates is within 3 days (and not past), grey further out. When the
+// goal has neither a total nor a date, there is no footer.
+function goalFooterHtml(g) {
+  if (g.total !== null && g.total !== undefined) {
+    const total = Number(g.total);
+    const current = Number(g.current ?? 0);
+    const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+    const width = total > 0 ? Math.min(100, Math.max(0, (current / total) * 100)) : 0;
+    return `
+      <div class="goal-progress-meta"><span>${current} of ${total}</span><span>${pct}%</span></div>
+      <div class="goal-bar"><span style="width:${width}%"></span></div>`;
+  }
+  const dates = [g.milestone_date, g.due_date].filter(Boolean).sort();
+  if (dates.length) {
+    const days = daysUntil(dates[0]);
+    if (days >= 0 && days <= 3) {
+      const label = days === 0 ? 'Due today' : days === 1 ? 'Tomorrow' : `${days} days remaining`;
+      return `<div class="goal-chip-row"><span class="chip rel-rose">${label}</span></div>`;
+    }
+    if (g.milestone_date) {
+      return `<div class="goal-chip-row"><span class="chip rel-grey">Next milestone · ${fmtDate(g.milestone_date)}</span></div>`;
+    }
+    return `<div class="goal-chip-row"><span class="chip rel-grey">Due ${fmtDate(g.due_date)}</span></div>`;
+  }
+  return '';
 }
-$('#editTargetBtn').addEventListener('click', openTargetEditor);
 
-$('#targetForm').addEventListener('submit', async (e) => {
+function renderGoals() {
+  const goals = (state && state.goals) || [];
+  const now = new Date();
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'short' });
+  const monthName = now.toLocaleDateString('en-US', { month: 'short' });
+  $('#goalsEyebrow').textContent = `${weekday}, ${monthName} ${now.getDate()}`;
+  $('#goalList').innerHTML = goals.length
+    ? goals.map((g) => {
+        const detail = g.detail
+          ? esc(g.detail)
+          : g.due_date ? `Due ${fmtDate(g.due_date)}` : '';
+        return `
+        <article class="card goal-card" data-goal-id="${g.id}">
+          ${g.eyebrow ? `<p class="eyebrow">${esc(g.eyebrow)}</p>` : ''}
+          <h3 class="goal-title">${esc(g.title)}</h3>
+          ${detail ? `<p class="goal-detail">${detail}</p>` : ''}
+          ${goalFooterHtml(g)}
+        </article>`;
+      }).join('')
+    : '<p class="muted">No goals yet.</p>';
+
+  document.querySelectorAll('[data-goal-id]').forEach((card) => {
+    card.addEventListener('click', () => {
+      const g = goals.find((x) => x.id === Number(card.dataset.goalId));
+      if (g) openGoalEditor(g);
+    });
+  });
+}
+
+function openGoalEditor(g) {
+  $('#goalFormTitle').textContent = g ? 'Edit goal' : 'Add goal';
+  $('#goalId').value = g ? g.id : '';
+  $('#goalTitle').value = g ? g.title : '';
+  $('#goalEyebrow').value = g ? g.eyebrow || '' : '';
+  $('#goalDetail').value = g ? g.detail || '' : '';
+  $('#goalDue').value = g && g.due_date ? g.due_date : '';
+  $('#goalMilestone').value = g && g.milestone_date ? g.milestone_date : '';
+  $('#goalCurrent').value = g && g.current !== null && g.current !== undefined ? g.current : '';
+  $('#goalTotal').value = g && g.total !== null && g.total !== undefined ? g.total : '';
+  $('#goalMonthly').checked = g ? Number(g.is_monthly_target) === 1 : false;
+  $('#goalError').textContent = '';
+  openModal('goalModal');
+}
+$('#newGoalBtn').addEventListener('click', () => openGoalEditor(null));
+
+$('#goalForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  $('#mtError').textContent = '';
-  const id = $('#targetId').value;
+  $('#goalError').textContent = '';
+  const id = $('#goalId').value;
+  const numOrNull = (v) => (v === '' ? null : Number(v));
   const payload = {
-    label: $('#mtLabel').value.trim(),
-    detail: $('#mtDetail').value,
-    current: Number($('#mtCurrent').value || 0),
-    total: Number($('#mtTotal').value || 0),
-    due_date: $('#mtDue').value || null,
+    title: $('#goalTitle').value.trim(),
+    eyebrow: $('#goalEyebrow').value,
+    detail: $('#goalDetail').value,
+    due_date: $('#goalDue').value || null,
+    milestone_date: $('#goalMilestone').value || null,
+    current: numOrNull($('#goalCurrent').value),
+    total: numOrNull($('#goalTotal').value),
+    is_monthly_target: $('#goalMonthly').checked ? 1 : 0,
     actor,
   };
   try {
-    if (id) await api(`/api/targets/${id}`, { method: 'PATCH', body: payload });
-    else await api('/api/targets', { method: 'POST', body: payload });
-    closeModal('targetModal');
+    if (id) await api(`/api/goals/${id}`, { method: 'PATCH', body: payload });
+    else await api('/api/goals', { method: 'POST', body: payload });
+    closeModal('goalModal');
     await loadState();
   } catch (err) {
-    $('#mtError').textContent = err.message;
-  }
-});
-
-/* ================= inbox ================= */
-
-function renderInbox() {
-  const captures = (state && state.captures) || [];
-  const unfiled = captures.filter((c) => !Number(c.filed));
-  const filed = captures.filter((c) => Number(c.filed));
-  const badge = $('#inboxBadge');
-  badge.textContent = String(unfiled.length);
-  badge.classList.toggle('hidden', unfiled.length === 0);
-
-  const card = (c, isFiled) => `
-    <div class="card capture-card${isFiled ? ' filed' : ''}">
-      <div class="capture-body">${esc(c.body)}</div>
-      <div class="capture-meta">
-        <span class="muted">${esc(c.author)} · ${esc(fmtDateTime(c.created_at))}</span>
-        <button type="button" class="btn btn-ghost btn-small" data-file-capture="${c.id}" data-filed="${isFiled ? 1 : 0}">${isFiled ? 'Move back to inbox' : 'Mark filed'}</button>
-      </div>
-    </div>`;
-  $('#captureList').innerHTML =
-    (unfiled.length
-      ? unfiled.map((c) => card(c, false)).join('')
-      : '<p class="muted">Nothing waiting. Drop the next thought above.</p>') +
-    (filed.length ? '<h3 class="filed-head">Filed</h3>' + filed.map((c) => card(c, true)).join('') : '');
-}
-
-$('#captureForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  $('#captureError').textContent = '';
-  try {
-    await api('/api/captures', { method: 'POST', body: { body: $('#captureBody').value, actor } });
-    $('#captureBody').value = '';
-    await loadState();
-  } catch (err) {
-    $('#captureError').textContent = err.message;
-  }
-});
-
-$('#captureList').addEventListener('click', async (e) => {
-  const btn = e.target.closest('[data-file-capture]');
-  if (!btn) return;
-  try {
-    await api(`/api/captures/${btn.dataset.fileCapture}`, {
-      method: 'PATCH',
-      body: { filed: btn.dataset.filed === '1' ? 0 : 1, actor },
-    });
-    await loadState();
-  } catch (err) {
-    alert(err.message);
+    $('#goalError').textContent = err.message;
   }
 });
 
@@ -1029,91 +1041,6 @@ $('#deadlineForm').addEventListener('submit', async (e) => {
   }
 });
 
-/* ================= projects ================= */
-
-const PROJECT_DOT_COLORS = ['#966a43', '#234d3b', '#c39a1d', '#7d8c6f', '#a34d3c', '#5b7a99'];
-
-function projectStatusChip(status) {
-  const map = {
-    active: ['status-active', 'Active'],
-    paused: ['status-paused', 'Paused'],
-    done: ['status-done', 'Done'],
-  };
-  const [cls, label] = map[status] || map.active;
-  return `<span class="chip ${cls}">${label}</span>`;
-}
-
-function renderProjects() {
-  const projects = state.projects || [];
-
-  // Sidebar PROJECTS group: quiet dot-and-name rows, data-driven; the
-  // whole group hides when there are no projects.
-  const group = $('#projectNavGroup');
-  if (projects.length) {
-    group.classList.remove('hidden');
-    $('#projectNav').innerHTML = projects.map((p, i) => `
-      <button type="button" class="project-nav-item" data-goto-projects>
-        <span class="project-dot" style="background:${PROJECT_DOT_COLORS[i % PROJECT_DOT_COLORS.length]}"></span>
-        <span class="project-nav-name">${esc(p.name)}</span>
-      </button>`).join('');
-  } else {
-    group.classList.add('hidden');
-    $('#projectNav').innerHTML = '';
-  }
-
-  // The Projects view: one paper card per project; clicking opens the editor.
-  $('#projectList').innerHTML = projects.length
-    ? projects.map((p) => `
-        <article class="card project-card" data-project-id="${p.id}">
-          <div class="project-card-head"><h3 class="project-name">${esc(p.name)}</h3>${projectStatusChip(p.status)}</div>
-          ${p.description ? `<p class="project-desc">${esc(p.description)}</p>` : ''}
-        </article>`).join('')
-    : '<p class="muted">No projects yet.</p>';
-
-  document.querySelectorAll('[data-project-id]').forEach((card) => {
-    card.addEventListener('click', () => {
-      const p = projects.find((x) => x.id === Number(card.dataset.projectId));
-      if (p) openProjectEditor(p);
-    });
-  });
-}
-
-$('#projectNav').addEventListener('click', (e) => {
-  if (e.target.closest('[data-goto-projects]')) showView('projects');
-});
-
-function openProjectEditor(p) {
-  $('#projectFormTitle').textContent = p ? 'Edit project' : 'Add project';
-  $('#projectId').value = p ? p.id : '';
-  $('#projectName').value = p ? p.name : '';
-  $('#projectDescription').value = p ? p.description || '' : '';
-  $('#projectStatus').value = p ? p.status : 'active';
-  $('#projectError').textContent = '';
-  openModal('projectModal');
-}
-
-$('#newProjectBtn').addEventListener('click', () => openProjectEditor(null));
-
-$('#projectForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  $('#projectError').textContent = '';
-  const id = $('#projectId').value;
-  const payload = {
-    name: $('#projectName').value.trim(),
-    description: $('#projectDescription').value,
-    status: $('#projectStatus').value,
-    actor,
-  };
-  try {
-    if (id) await api(`/api/projects/${id}`, { method: 'PATCH', body: payload });
-    else await api('/api/projects', { method: 'POST', body: payload });
-    closeModal('projectModal');
-    await loadState();
-  } catch (err) {
-    $('#projectError').textContent = err.message;
-  }
-});
-
 /* ================= reports ================= */
 
 const REPORT_AUTHORS = ['Jesutofunmi', 'Nayden', 'Claude', 'ChatGPT', 'Instinct'];
@@ -1222,12 +1149,11 @@ $('#reportForm').addEventListener('submit', async (e) => {
 
 function renderAll() {
   renderToday();
-  renderTarget();
-  renderInbox();
+  renderMonthlyTarget();
+  renderGoals();
   renderBoard();
   renderCalendar();
   renderDeadlines();
-  renderProjects();
   renderReports();
   renderFollowups();
   refreshReportForm();

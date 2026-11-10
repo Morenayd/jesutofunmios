@@ -148,14 +148,6 @@ textarea { resize: vertical; }
 .brand-mark svg { width: 27px; height: 27px; }
 .brand-name { font-size: 1.24rem; font-weight: 800; letter-spacing: -0.02em; color: var(--deep); }
 
-.side-label {
-  margin: 1rem 0.35rem 0.4rem;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
 .tabs { display: flex; flex-direction: column; gap: 0.2rem; }
 .tab {
   display: flex;
@@ -178,28 +170,6 @@ textarea { resize: vertical; }
 .tab:hover { background: rgba(255, 254, 250, 0.65); color: var(--ink); }
 .tab.active { background: var(--green); color: #fff; font-weight: 600; box-shadow: 0 2px 8px rgba(25, 60, 46, 0.25); }
 .tab.active:hover { background: var(--deep); color: #fff; }
-
-.project-nav { display: flex; flex-direction: column; gap: 0.1rem; }
-.project-nav-item {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  width: 100%;
-  padding: 0.42rem 0.75rem;
-  background: none;
-  border: none;
-  border-radius: 10px;
-  font-family: inherit;
-  font-size: 0.92rem;
-  font-weight: 500;
-  color: var(--ink-soft);
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.project-nav-item:hover { background: rgba(255, 254, 250, 0.65); color: var(--ink); }
-.project-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; }
-.project-nav-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: 0.55rem; padding-top: 0.9rem; }
 .actor-card {
@@ -458,12 +428,6 @@ main {
 .ti-title { font-weight: 600; font-size: 0.9rem; line-height: 1.3; }
 .ti-sub { color: var(--muted); font-size: 0.78rem; margin-top: 0.1rem; }
 
-/* ---------- inbox (captures) ---------- */
-.capture-card { margin-bottom: 0.7rem; }
-.capture-body { white-space: pre-wrap; font-size: 0.94rem; word-break: break-word; }
-.capture-meta { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; margin-top: 0.6rem; }
-.capture-card.filed { opacity: 0.55; }
-.filed-head { margin: 1.2rem 0 0.6rem; font-size: 0.95rem; }
 
 /* ---------- follow-ups (people) ---------- */
 .person-row {
@@ -494,9 +458,20 @@ main {
 }
 .channel-chip { background: var(--sage-soft); color: var(--ink-soft); flex: 0 0 auto; }
 
-/* ---------- monthly target (projects view) ---------- */
-.target-summary-label { font-weight: 700; font-size: 1.02rem; }
-.target-summary-progress { margin-top: 0.3rem; color: var(--ink-soft); }
+/* ---------- goals ---------- */
+.goal-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; align-items: stretch; }
+@media (max-width: 1250px) { .goal-grid { grid-template-columns: repeat(2, 1fr); } }
+.goal-card { margin-bottom: 0; cursor: pointer; display: flex; flex-direction: column; transition: box-shadow 0.15s ease, border-color 0.15s ease; }
+.goal-card:hover { box-shadow: var(--shadow-lift); border-color: #d6d6c2; }
+.goal-card .eyebrow { margin-bottom: 0.55rem; }
+.goal-title { margin: 0 0 0.55rem; font-size: 1.42rem; font-weight: 800; letter-spacing: -0.015em; line-height: 1.22; color: var(--ink); }
+.goal-detail { margin: 0 0 1.1rem; color: var(--ink-soft); font-size: 0.92rem; }
+.goal-progress-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-top: auto; color: var(--ink-soft); font-size: 0.88rem; }
+.goal-bar { height: 6px; margin-top: 0.5rem; background: var(--panel); border-radius: 999px; overflow: hidden; }
+.goal-bar span { display: block; height: 100%; background: #7d8c6f; border-radius: 999px; }
+.goal-chip-row { margin-top: auto; }
+.checkbox-label { display: flex; align-items: center; gap: 0.55rem; font-size: 0.9rem; font-weight: 500; color: var(--ink); cursor: pointer; }
+.checkbox-label input { width: auto; margin: 0; }
 
 /* ---------- chips ---------- */
 .chip {
@@ -730,14 +705,6 @@ main {
 .deadline-notes { color: var(--ink-soft); font-size: 0.86rem; }
 .past { opacity: 0.55; }
 
-/* ---------- projects ---------- */
-.project-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
-.project-card { margin-bottom: 0; cursor: pointer; transition: box-shadow 0.15s ease, border-color 0.15s ease; }
-.project-card:hover { box-shadow: var(--shadow-lift); border-color: #d6d6c2; }
-.project-card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.4rem; }
-.project-name { margin: 0; font-size: 1.05rem; font-weight: 700; }
-.project-desc { margin: 0; color: var(--ink-soft); font-size: 0.9rem; }
-
 /* ---------- reports ---------- */
 .reports-col { max-width: 880px; margin: 0 auto; width: 100%; }
 .report-hint { margin: 0 0 0.4rem; }
@@ -827,7 +794,6 @@ main {
   .brand { padding: 0; }
   .tabs { flex-direction: row; flex-wrap: nowrap; overflow-x: auto; flex: 1 1 auto; padding-bottom: 0.15rem; }
   .tab { width: auto; white-space: nowrap; padding: 0.5rem 0.65rem; }
-  #projectNavGroup { display: none; }
   .sidebar-foot {
     margin-top: 0;
     padding-top: 0;
@@ -843,5 +809,5 @@ main {
   .board { grid-template-columns: 1fr; }
   .column { min-height: 0; }
   .view-title { font-size: 1.65rem; }
-  .project-list { grid-template-columns: 1fr; }
+  .goal-grid { grid-template-columns: 1fr; }
 }
