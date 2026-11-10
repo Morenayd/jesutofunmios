@@ -28,6 +28,12 @@ const handlers = [
   ['./functions/api/reports.js', 'onRequestPost', 'hReportsPost'],
   ['./functions/api/projects.js', 'onRequestPost', 'hProjectsPost'],
   ['./functions/api/projects/[id].js', 'onRequestPatch', 'hProjectPatch'],
+  ['./functions/api/targets.js', 'onRequestPost', 'hTargetsPost'],
+  ['./functions/api/targets/[id].js', 'onRequestPatch', 'hTargetPatch'],
+  ['./functions/api/captures.js', 'onRequestPost', 'hCapturesPost'],
+  ['./functions/api/captures/[id].js', 'onRequestPatch', 'hCapturePatch'],
+  ['./functions/api/people.js', 'onRequestPost', 'hPeoplePost'],
+  ['./functions/api/people/[id].js', 'onRequestPatch', 'hPersonPatch'],
 ];
 
 let handlerCode = '';
@@ -63,11 +69,14 @@ export default {
     const path = url.pathname;
     if (path.startsWith('/api/')) {
       try {
-        // Self-migration (the _middleware equivalent): create the reports
-        // and projects tables if they are missing. Idempotent and cheap;
-        // runs before handlers.
+        // Self-migration (the _middleware equivalent): create the newer
+        // tables if they are missing. Idempotent and cheap; runs before
+        // handlers.
         await ensureReportsTable(env);
         await ensureProjectsTable(env);
+        await ensureTargetsTable(env);
+        await ensureCapturesTable(env);
+        await ensurePeopleTable(env);
         if (path === '/api/auth') {
           if (request.method !== 'POST') return err('Method not allowed.', 405);
           return await hAuthPost({ request, env });
@@ -86,6 +95,12 @@ export default {
         if (path === '/api/reports' && request.method === 'POST') return await hReportsPost({ request, env });
         if (path === '/api/projects' && request.method === 'POST') return await hProjectsPost({ request, env });
         if ((m = path.match(/^\\/api\\/projects\\/(\\d+)$/)) && request.method === 'PATCH') return await hProjectPatch({ request, env, params: { id: m[1] } });
+        if (path === '/api/targets' && request.method === 'POST') return await hTargetsPost({ request, env });
+        if ((m = path.match(/^\\/api\\/targets\\/(\\d+)$/)) && request.method === 'PATCH') return await hTargetPatch({ request, env, params: { id: m[1] } });
+        if (path === '/api/captures' && request.method === 'POST') return await hCapturesPost({ request, env });
+        if ((m = path.match(/^\\/api\\/captures\\/(\\d+)$/)) && request.method === 'PATCH') return await hCapturePatch({ request, env, params: { id: m[1] } });
+        if (path === '/api/people' && request.method === 'POST') return await hPeoplePost({ request, env });
+        if ((m = path.match(/^\\/api\\/people\\/(\\d+)$/)) && request.method === 'PATCH') return await hPersonPatch({ request, env, params: { id: m[1] } });
         if (path === '/api/logout' && request.method === 'POST') return await hLogoutPost({ request, env });
         return err('Not found.', 404);
       } catch (e) {

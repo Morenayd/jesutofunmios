@@ -43,9 +43,14 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.8"/><rect x="13" y="4" width="7" height="7" rx="1.8"/><rect x="4" y="13" width="7" height="7" rx="1.8"/><rect x="13" y="13" width="7" height="7" rx="1.8"/></svg>
           <span>Today</span>
         </button>
+        <button data-view="inbox" class="tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 13.6 5.7 6.7A2 2 0 0 1 7.6 5.3h8.8a2 2 0 0 1 1.9 1.4l2.2 6.9v3a1.9 1.9 0 0 1-1.9 1.9H5.4a1.9 1.9 0 0 1-1.9-1.9z"/><path d="M3.5 13.6h5.2a3.3 3.3 0 0 0 6.6 0h5.2"/></svg>
+          <span>Inbox</span>
+          <span class="tab-badge hidden" id="inboxBadge">0</span>
+        </button>
         <button data-view="board" class="tab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="m8.7 12.3 2.3 2.3 4.3-4.8"/></svg>
-          <span>Tasks</span>
+          <span>My tasks</span>
         </button>
         <button data-view="calendar" class="tab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.8h17"/><path d="M8 3v3.6M16 3v3.6"/></svg>
@@ -64,8 +69,12 @@
           <span>Reports</span>
         </button>
         <button data-view="agents" class="tab">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8.4" r="3.4"/><path d="M3.6 19.6c.6-3 2.7-4.7 5.4-4.7s4.8 1.7 5.4 4.7"/><circle cx="17.2" cy="9.4" r="2.5"/><path d="M16.2 15.1c2.1.3 3.6 1.8 4.1 4.1"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4.2c.55 4.15 2.2 5.8 6.3 6.3-4.1.5-5.75 2.15-6.3 6.3-.55-4.15-2.2-5.8-6.3-6.3 4.1-.5 5.75-2.15 6.3-6.3Z"/><path d="M18.3 15.6c.3 2.25 1.2 3.15 3.4 3.4-2.2.25-3.1 1.15-3.4 3.4-.3-2.25-1.2-3.15-3.4-3.4 2.2-.25 3.1-1.15 3.4-3.4Z"/></svg>
           <span>Agents</span>
+        </button>
+        <button data-view="followups" class="tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8.4" r="3.4"/><path d="M3.6 19.6c.6-3 2.7-4.7 5.4-4.7s4.8 1.7 5.4 4.7"/><circle cx="17.2" cy="9.4" r="2.5"/><path d="M16.2 15.1c2.1.3 3.6 1.8 4.1 4.1"/></svg>
+          <span>Follow-ups</span>
         </button>
       </nav>
 
@@ -94,6 +103,11 @@
     </aside>
 
     <main>
+    <div id="loadError" class="load-error hidden">
+      <span>Could not load the board just now.</span>
+      <button type="button" class="btn btn-ghost btn-small" id="loadRetryBtn">Retry</button>
+    </div>
+
     <!-- ============ TODAY ============ -->
     <section id="view-today" class="view">
       <div class="view-head">
@@ -107,55 +121,74 @@
       </div>
 
       <div class="today-grid">
-      <div class="today-main">
-        <div class="brief-panel">
-          <div class="brief-head">
-            <span class="brief-label">Brief</span>
-            <span class="brief-meta" id="todayDigestMeta"></span>
+        <div class="today-main">
+          <div class="brief-panel">
+            <div class="brief-head">
+              <span class="brief-label">Brief</span>
+              <span class="brief-meta" id="todayDigestMeta"></span>
+            </div>
+            <h2 class="brief-title" id="todayDigestTitle">Latest digest</h2>
+            <div id="todayDigestBody" class="markdown brief-body"></div>
           </div>
-          <h2 class="brief-title" id="todayDigestTitle">Latest digest</h2>
-          <div id="todayDigestBody" class="markdown brief-body"></div>
         </div>
 
-        <section class="card attention-card">
-          <div class="card-head">
-            <h2>What deserves your attention</h2>
-            <span class="muted" id="attentionCount"></span>
+        <aside class="today-rail">
+          <div class="card deadlines-card">
+            <div class="card-head">
+              <h2>Deadlines</h2>
+              <button type="button" class="quiet-link" id="deadlinesMore">Next 14 days <span aria-hidden="true">&#8594;</span></button>
+            </div>
+            <div id="todayDeadlines"></div>
           </div>
-          <div id="dueNowList"></div>
-        </section>
-
-        <section class="activity-block">
-          <div class="section-head"><h2>Recent activity</h2></div>
-          <div id="activityList"></div>
-        </section>
+        </aside>
       </div>
 
-      <aside class="today-rail">
-        <div class="card deadlines-card">
-          <div class="card-head">
-            <h2>Deadlines</h2>
-            <button type="button" class="quiet-link" id="deadlinesMore">Next 14 days <span aria-hidden="true">&#8594;</span></button>
-          </div>
-          <div id="todayDeadlines"></div>
+      <button type="button" class="target-banner hidden" id="targetBanner">
+        <span class="target-text">
+          <span class="target-eyebrow" id="targetEyebrow"></span>
+          <span class="target-label" id="targetLabel"></span>
+        </span>
+        <span class="target-progress"><span id="targetProgress"></span> <span aria-hidden="true">&#8594;</span></span>
+      </button>
+
+      <div class="today-grid">
+        <div class="today-main">
+          <section class="card tasks-card">
+            <div class="card-head">
+              <h2>Tasks <span class="tasks-count" id="todayTasksCount"></span></h2>
+            </div>
+            <div id="todayTasks"></div>
+            <div class="tasks-foot hidden" id="todayTasksFoot">
+              <button type="button" class="quiet-link" id="todayTasksMore">View all <span aria-hidden="true">&#8594;</span></button>
+            </div>
+          </section>
         </div>
 
-        <div class="card week-card">
-          <div class="card-head">
-            <h2>This week</h2>
-            <span class="muted" id="weekRange"></span>
+        <aside class="today-rail">
+          <div class="card schedule-card">
+            <div class="card-head"><h2>Schedule</h2></div>
+            <div id="scheduleList"></div>
           </div>
-          <div class="week-nav">
-            <button type="button" class="week-nav-btn" id="weekPrev" aria-label="Previous week">&#8249;</button>
-            <div id="weekStrip" class="week"></div>
-            <button type="button" class="week-nav-btn" id="weekNext" aria-label="Next week">&#8250;</button>
-          </div>
-          <div id="todayItems"></div>
-        </div>
-
-        <p class="counts-line" id="statsRow"></p>
-      </aside>
+        </aside>
       </div>
+    </section>
+
+    <!-- ============ INBOX ============ -->
+    <section id="view-inbox" class="view hidden">
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Notes, links, half-formed thoughts</p>
+          <h1 class="view-title">Inbox</h1>
+        </div>
+      </div>
+      <form id="captureForm" class="card capture-form">
+        <label>Drop something in
+          <textarea id="captureBody" rows="3" required placeholder="Drop a note, a link, a half-formed thought…"></textarea>
+        </label>
+        <p class="form-error" id="captureError"></p>
+        <button type="submit" class="btn btn-primary">Add to inbox</button>
+      </form>
+      <div id="captureList"></div>
     </section>
 
     <!-- ============ TASKS (BOARD) ============ -->
@@ -163,7 +196,7 @@
       <div class="view-head">
         <div>
           <p class="eyebrow">The board</p>
-          <h1 class="view-title">Tasks</h1>
+          <h1 class="view-title">My tasks</h1>
         </div>
         <div class="head-actions">
           <label class="filter-label" for="ownerFilter">Owner
@@ -249,6 +282,13 @@
           <button id="newProjectBtn" class="btn btn-primary">Add project</button>
         </div>
       </div>
+      <div class="card target-card">
+        <div class="card-head">
+          <h2>Monthly target</h2>
+          <button type="button" class="btn btn-ghost btn-small" id="editTargetBtn">Edit</button>
+        </div>
+        <div id="targetSummary"></div>
+      </div>
       <div id="projectList" class="project-list"></div>
       <p class="muted board-hint">Projects are their own section, like Deadlines. Tasks are not filed under projects — they stay on the board.</p>
     </section>
@@ -308,12 +348,14 @@
         </ol>
         <h3>How the board is organised</h3>
         <ul>
-          <li><strong>Today</strong> — the morning brief, the deadlines card, this week's calendar, and what deserves attention.</li>
-          <li><strong>Tasks</strong> — the board: To Do / In Progress / Waiting on Jesutofunmi / Done.</li>
+          <li><strong>Today</strong> — the morning brief, the Deadlines card, the monthly target, then the day's Tasks and Schedule.</li>
+          <li><strong>Inbox</strong> — raw captures: notes, links, half-formed thoughts, dropped by anyone. Nayden triages them in the morning sync and marks them filed.</li>
+          <li><strong>My tasks</strong> — the board: To Do / In Progress / Waiting on Jesutofunmi / Done.</li>
           <li><strong>Calendar</strong> — deadlines and task due dates on a month grid.</li>
           <li><strong>Deadlines</strong> — the dated commitments. If you learn a new deadline, add it.</li>
-          <li><strong>Projects</strong> — the standing areas of work. Projects are their own section; tasks are not filed under them.</li>
+          <li><strong>Projects</strong> — the standing areas of work, and the monthly target shown on Today. Projects are their own section; tasks are not filed under them.</li>
           <li><strong>Reports</strong> — one daily report per person. See &ldquo;Daily reports&rdquo; below.</li>
+          <li><strong>Follow-ups</strong> — the people Jesutofunmi is keeping in touch with, with the next step for each. If you learn someone should be contacted, add them here.</li>
           <li><strong>The Brief</strong> — Nayden posts the morning brief through the API and it appears as the green Brief panel on Today. There is no separate brief page.</li>
         </ul>
         <h3>Report what you learn</h3>
@@ -321,7 +363,8 @@
         <ul>
           <li><strong>Deadlines</strong> go to Deadlines, with the date.</li>
           <li><strong>Finished or ongoing work</strong> goes on the board as a task, with the evidence on the card.</li>
-          <li><strong>Anything that fits neither</strong> goes to Nayden, who folds it into the morning brief.</li>
+          <li><strong>A person to contact</strong> goes to Follow-ups, with the next step.</li>
+          <li><strong>Anything that fits none of these</strong> — a note, a link, a half-formed thought — goes in the Inbox as a capture.</li>
         </ul>
         <p>Jesutofunmi adds things the same way when she has context nobody else does — there is no separate process for her. The rule of thumb: if it happened outside Nayden's view, it goes on the board.</p>
         <h3>Daily reports</h3>
@@ -329,6 +372,20 @@
         <p>Jesutofunmi's report is the one exception to posting your own: she gives hers to Instinct, who posts it under her name. Nayden reads every report each morning, and the morning brief is the aggregation of them. A report is how work becomes visible to the whole team — if it is not reported, it may as well not have happened.</p>
         <p class="muted">When in doubt, leave a task Waiting with a clear note rather than improvising. A precise question beats a confident mistake.</p>
       </div>
+    </section>
+
+    <!-- ============ FOLLOW-UPS ============ -->
+    <section id="view-followups" class="view hidden">
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">People to keep in touch with</p>
+          <h1 class="view-title">Follow-ups</h1>
+        </div>
+        <div class="head-actions">
+          <button id="newPersonBtn" class="btn btn-primary">Add person</button>
+        </div>
+      </div>
+      <div id="peopleList"></div>
     </section>
     </main>
   </div>
@@ -426,6 +483,58 @@
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" data-close="projectModal">Cancel</button>
       <button type="submit" class="btn btn-primary">Save project</button>
+    </div>
+  </form>
+</div>
+
+<!-- ============ TARGET EDITOR ============ -->
+<div id="targetModal" class="modal hidden">
+  <form id="targetForm" class="modal-card">
+    <div class="modal-head">
+      <h2 id="targetFormTitle">Monthly target</h2>
+      <button type="button" class="btn btn-ghost btn-small" data-close="targetModal">&#10005;</button>
+    </div>
+    <input type="hidden" id="targetId" />
+    <label>Target <input id="mtLabel" required maxlength="200" placeholder="Publish 4 hardware essays" /></label>
+    <label>Detail <input id="mtDetail" maxlength="500" placeholder="The Hardware Brief" /></label>
+    <div class="form-row">
+      <label>Done so far <input id="mtCurrent" type="number" min="0" step="1" /></label>
+      <label>Out of <input id="mtTotal" type="number" min="0" step="1" /></label>
+      <label>Due <input id="mtDue" type="date" /></label>
+    </div>
+    <p class="form-error" id="mtError"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" data-close="targetModal">Cancel</button>
+      <button type="submit" class="btn btn-primary">Save target</button>
+    </div>
+  </form>
+</div>
+
+<!-- ============ PERSON EDITOR ============ -->
+<div id="personModal" class="modal hidden">
+  <form id="personForm" class="modal-card">
+    <div class="modal-head">
+      <h2 id="personFormTitle">Add person</h2>
+      <button type="button" class="btn btn-ghost btn-small" data-close="personModal">&#10005;</button>
+    </div>
+    <input type="hidden" id="personId" />
+    <label>Name <input id="personName" required maxlength="200" /></label>
+    <label>Who they are <textarea id="personContext" rows="2"></textarea></label>
+    <label>Why they are on the list <textarea id="personNote" rows="3"></textarea></label>
+    <label>Next step <textarea id="personNextStep" rows="2"></textarea></label>
+    <label>Channel
+      <select id="personChannel">
+        <option value="email">Email</option>
+        <option value="whatsapp">WhatsApp</option>
+        <option value="phone">Phone</option>
+        <option value="linkedin">LinkedIn</option>
+        <option value="other">Other</option>
+      </select>
+    </label>
+    <p class="form-error" id="personError"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" data-close="personModal">Cancel</button>
+      <button type="submit" class="btn btn-primary">Save person</button>
     </div>
   </form>
 </div>

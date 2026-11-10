@@ -2,8 +2,11 @@
 // A request is authenticated when its lhq_session cookie equals the token
 // derived from the server-side TEAM_PASSCODE secret.
 import {
+  ensureCapturesTable,
+  ensurePeopleTable,
   ensureProjectsTable,
   ensureReportsTable,
+  ensureTargetsTable,
   json,
   readSessionCookie,
   sessionToken,
@@ -13,11 +16,14 @@ export async function onRequest(context) {
   const { request, env, next } = context;
   const url = new URL(request.url);
 
-  // Self-migration: make sure the reports and projects tables exist before
-  // any handler runs. Idempotent and cheap; lets existing databases pick
-  // the tables up with no manual step.
+  // Self-migration: make sure the newer tables exist before any handler
+  // runs. Idempotent and cheap; lets existing databases pick the tables
+  // up with no manual step.
   await ensureReportsTable(env);
   await ensureProjectsTable(env);
+  await ensureTargetsTable(env);
+  await ensureCapturesTable(env);
+  await ensurePeopleTable(env);
 
   if (url.pathname === '/api/auth') return next();
 

@@ -193,6 +193,175 @@ async function ensureProjectsTable(env) {
   }
 }
 
+// Whole-number counts (a target's current/total). Returns the fallback for
+// empty input, undefined for anything that is not a non-negative integer.
+function validCount(value, fallback = 0) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n > 100000) return undefined;
+  return n;
+}
+
+// Monthly target: the one headline goal shown as the butter banner on
+// Today ("MONTHLY TARGET · NOV 30 / Publish 4 hardware essays / 1 / 4
+// published"). Targets are edited from the Projects view; Today only
+// displays the earliest-due one.
+const TARGETS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS targets (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  label      TEXT NOT NULL,
+  detail     TEXT NOT NULL DEFAULT '',
+  current    INTEGER NOT NULL DEFAULT 0,
+  total      INTEGER NOT NULL DEFAULT 0,
+  due_date   TEXT,
+  created_by TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)`;
+
+// Her own Daybreak demo target, in her words — seeded once, hers to edit.
+const TARGET_SEED = [
+  {
+    label: 'Publish 4 hardware essays',
+    detail: 'The Hardware Brief',
+    current: 1,
+    total: 4,
+    due_date: '2026-11-30',
+  },
+];
+
+async function ensureTargetsTable(env) {
+  if (!env || !env.DB) return;
+  await env.DB.prepare(TARGETS_TABLE_SQL).run();
+  const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM targets').first();
+  if (row && row.n === 0) {
+    const ts = nowISO();
+    await env.DB.batch(
+      TARGET_SEED.map((t) =>
+        env.DB
+          .prepare(
+            'INSERT INTO targets (label, detail, current, total, due_date, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+          )
+          .bind(t.label, t.detail, t.current, t.total, t.due_date, 'Nayden', ts, ts)
+      )
+    );
+  }
+}
+
+// Captures: the Inbox — raw notes, links and half-formed thoughts dropped
+// by anyone, exactly as written. `filed` flips when Nayden has triaged a
+// capture into the board/digest; nothing here is edited or deleted.
+const CAPTURES_TABLE_SQL = `CREATE TABLE IF NOT EXISTS captures (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  body       TEXT NOT NULL DEFAULT '',
+  author     TEXT NOT NULL DEFAULT '',
+  filed      INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+)`;
+
+async function ensureCapturesTable(env) {
+  if (!env || !env.DB) return;
+  await env.DB.prepare(CAPTURES_TABLE_SQL).run();
+}
+
+// People: the Follow-ups section — who Jesutofunmi is keeping in touch
+// with, and the next step for each. Seeded from her 9 Nov 2026 shortlist
+// (people-shortlist-2026-11-09.md), in that file's own words.
+const PEOPLE_TABLE_SQL = `CREATE TABLE IF NOT EXISTS people (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  context    TEXT NOT NULL DEFAULT '',
+  note       TEXT NOT NULL DEFAULT '',
+  next_step  TEXT NOT NULL DEFAULT '',
+  channel    TEXT NOT NULL DEFAULT 'email',
+  created_by TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)`;
+
+const PEOPLE_SEED = [
+  {
+    name: 'Jahleesa Phelps',
+    context: 'BVCC Executive Director (jahleesa@bvcc.vc); leads the VC cohort programme Jesutofunmi is in and is the point of contact for her Advanced Programs application',
+    note: 'Her 3 Nov email asked Jesutofunmi to reply confirming receipt — the reply was drafted but never sent. The same email promised a first-round interview update by Mon 9 Nov; it has not arrived.',
+    next_step: 'Confirm receipt and politely follow up on the first-round interview timeline.',
+    channel: 'email',
+  },
+  {
+    name: 'Jean Bray',
+    context: 'Burns & McDonnell recruiting (jbray@burnsmcd.com); the recruiting contact for the opportunity she picked up at WE26',
+    note: 'Interview invitation arrived 8 Nov: a pre-recorded video interview due within one week (~15 Nov, 23:23 ET), plus her unofficial transcript is to be emailed to recruiting — that email is drafted and still unsent.',
+    next_step: 'Email the transcript to recruiting; the video interview itself is hers to complete this week.',
+    channel: 'email',
+  },
+  {
+    name: 'Dr Xishuang Dong',
+    context: 'Her PVAMU professor; agreed to write her Second Start scholarship recommendation letter, and named as her advisor on the POPL 2027 form',
+    note: 'The letter was confirmed still outstanding on 10 Oct and the Second Start application stays blocked on it. She named him as advisor on the POPL form on 2 Nov — a natural moment to thank him and nudge the letter.',
+    next_step: 'Thank him for the POPL advisor naming and nudge the Second Start letter.',
+    channel: 'email',
+  },
+  {
+    name: 'Francesca Falliti',
+    context: 'HPE Senior Recruiter on her Product Management Intern process; sent prep tips before the 27 Oct interview',
+    note: 'Her 28 Oct acknowledgement said an update would come by email once there was one. None has arrived in the ~2 weeks since the interview — a short, confident status check is timely.',
+    next_step: 'Send a short, confident status check on the PM Intern process.',
+    channel: 'email',
+  },
+  {
+    name: 'Wendy Lewis',
+    context: 'HPE (Cybersecurity & Digital Risk Management); referred her to the HPE PM Intern role in September and sent well-wishes the night before the interview',
+    note: 'Jesutofunmi thanked her on 27 Oct and promised "I will keep you posted as things progress." Keeping that promise keeps her strongest internal advocate warm.',
+    next_step: 'Send the promised brief update: interview done, awaiting the team\u2019s decision.',
+    channel: 'email',
+  },
+  {
+    name: 'John Salihu',
+    context: 'Cummins referrer; referred her to the Cummins Electronic Systems Summer Internship (job 2437302) and forwarded her resume himself on 24 Oct',
+    note: 'Cummins HR confirmed receipt of her application the same evening, 24 Oct. No thank-you from her appears in sent mail — one is owed to the person who personally carried her resume in.',
+    next_step: 'Send a thank-you plus a short status note.',
+    channel: 'email',
+  },
+  {
+    name: 'Prof. Olga Mironenko',
+    context: 'UIUC ECE professor; invited her to the UIUC ECE prospective graduate students dinner at WE26 and confirmed her spot',
+    note: 'She attended the dinner on 6 Nov; Olga\u2019s last message was pre-dinner logistics. A post-dinner thank-you is owed, and UIUC ECE is a live graduate-school connection worth keeping warm.',
+    next_step: 'Send a post-dinner thank-you.',
+    channel: 'email',
+  },
+  {
+    name: 'Shreyas Doshi',
+    context: 'High Leverage Labs — the PM she worked directly with (2025\u20132026); together they took Product Sense and Product Leaders Club from 5% to 38% WAU',
+    note: 'Her closest professional tie and strongest PM reference point. No personal exchange appears in the last 30 days of mail (only his newsletter), and she is mid PM-interview season.',
+    next_step: 'Send a short update to keep the relationship current.',
+    channel: 'email',
+  },
+  {
+    name: 'Lijun Qian',
+    context: 'Research co-author of the review paper on foundation models for knowledge graphs (HGNet, ULTRA, MERRY)',
+    note: 'A live research collaboration with no recorded contact since she built the presentation from their paper on 7 Oct. Relationship maintenance — lowest urgency on the shortlist.',
+    next_step: 'Send a brief check-in on the collaboration.',
+    channel: 'email',
+  },
+];
+
+async function ensurePeopleTable(env) {
+  if (!env || !env.DB) return;
+  await env.DB.prepare(PEOPLE_TABLE_SQL).run();
+  const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM people').first();
+  if (row && row.n === 0) {
+    const ts = nowISO();
+    await env.DB.batch(
+      PEOPLE_SEED.map((p) =>
+        env.DB
+          .prepare(
+            'INSERT INTO people (name, context, note, next_step, channel, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+          )
+          .bind(p.name, p.context, p.note, p.next_step, p.channel, 'Nayden', ts, ts)
+      )
+    );
+  }
+}
+
 // ---- ./functions/api/auth.js ----
 // POST /api/auth — body { passcode, actor }
 // On a passcode match, sets an HttpOnly session cookie whose value is a
@@ -243,11 +412,15 @@ async function hLogoutPost() {
 // GET /api/state — everything the SPA needs in one call:
 // open tasks + latest 50 done, latest digest in full, digest index,
 // deadlines sorted by date, latest 30 activity rows, every daily
-// report from the last 7 days, and all projects.
+// report from the last 7 days, all projects, all targets, the latest
+// 50 captures, and all people.
 
 async function hStateGet({ env }) {
   await ensureReportsTable(env);
   await ensureProjectsTable(env);
+  await ensureTargetsTable(env);
+  await ensureCapturesTable(env);
+  await ensurePeopleTable(env);
 
   const open = await env.DB.prepare(
     `SELECT * FROM tasks WHERE status != 'done'
@@ -291,6 +464,22 @@ async function hStateGet({ env }) {
      ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, id ASC`
   ).all();
 
+  // Targets: earliest due first (undated last) — the first row is the one
+  // the Today banner shows.
+  const targets = await env.DB.prepare(
+    `SELECT * FROM targets
+     ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date ASC, id ASC`
+  ).all();
+
+  // Captures: newest first, capped at 50 — enough for the badge count and
+  // the Inbox list without shipping the whole archive.
+  const captures = await env.DB.prepare(
+    'SELECT * FROM captures ORDER BY id DESC LIMIT 50'
+  ).all();
+
+  // People: shortlist order (seeded order), oldest first.
+  const people = await env.DB.prepare('SELECT * FROM people ORDER BY id ASC').all();
+
   return json({
     tasks: [...(open.results || []), ...(done.results || [])],
     latestDigest: latestDigest || null,
@@ -299,6 +488,9 @@ async function hStateGet({ env }) {
     activity: activity.results || [],
     reports: reports.results || [],
     projects: projects.results || [],
+    targets: targets.results || [],
+    captures: captures.results || [],
+    people: people.results || [],
   });
 }
 
@@ -671,6 +863,240 @@ async function hProjectPatch({ request, env, params }) {
   return json({ project });
 }
 
+// ---- ./functions/api/targets.js ----
+// POST /api/targets — add a monthly target.
+// Body: { label (required), detail, current, total, due_date, actor }
+
+async function hTargetsPost({ request, env }) {
+  await ensureTargetsTable(env);
+
+  const body = await parseBody(request);
+  if (!body) return err('Body must be valid JSON.', 400);
+
+  const label = cleanStr(body.label, 200).trim();
+  if (!label) return err('label is required.', 400);
+
+  const current = validCount(body.current, 0);
+  if (current === undefined) return err('current must be a whole number, 0 or more.', 400);
+  const total = validCount(body.total, 0);
+  if (total === undefined) return err('total must be a whole number, 0 or more.', 400);
+
+  const dueDate = validDate(body.due_date);
+  if (dueDate === undefined) return err('due_date must be an ISO date (YYYY-MM-DD).', 400);
+
+  const actor = getActor(request, body);
+  const ts = nowISO();
+  const result = await env.DB.prepare(
+    'INSERT INTO targets (label, detail, current, total, due_date, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  )
+    .bind(label, cleanStr(body.detail, 500), current, total, dueDate, actor, ts, ts)
+    .run();
+
+  await writeActivity(env, { actor, action: 'target_added', note: label });
+
+  const target = await env.DB.prepare('SELECT * FROM targets WHERE id = ?')
+    .bind(result.meta.last_row_id)
+    .first();
+  return json({ target }, 201);
+}
+
+// ---- ./functions/api/targets/[id].js ----
+// PATCH /api/targets/:id — partial update of label, detail, current,
+// total and due_date.
+
+async function hTargetPatch({ request, env, params }) {
+  await ensureTargetsTable(env);
+
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) return err('Invalid target id.', 400);
+
+  const existing = await env.DB.prepare('SELECT * FROM targets WHERE id = ?').bind(id).first();
+  if (!existing) return err('Target not found.', 404);
+
+  const body = await parseBody(request);
+  if (!body) return err('Body must be valid JSON.', 400);
+
+  const next = { ...existing };
+
+  if ('label' in body) {
+    const label = cleanStr(body.label, 200).trim();
+    if (!label) return err('label cannot be empty.', 400);
+    next.label = label;
+  }
+  if ('detail' in body) next.detail = cleanStr(body.detail, 500);
+  if ('current' in body) {
+    const current = validCount(body.current, 0);
+    if (current === undefined) return err('current must be a whole number, 0 or more.', 400);
+    next.current = current;
+  }
+  if ('total' in body) {
+    const total = validCount(body.total, 0);
+    if (total === undefined) return err('total must be a whole number, 0 or more.', 400);
+    next.total = total;
+  }
+  if ('due_date' in body) {
+    const dueDate = validDate(body.due_date);
+    if (dueDate === undefined) return err('due_date must be an ISO date (YYYY-MM-DD).', 400);
+    next.due_date = dueDate;
+  }
+
+  await env.DB.prepare(
+    'UPDATE targets SET label = ?, detail = ?, current = ?, total = ?, due_date = ?, updated_at = ? WHERE id = ?'
+  )
+    .bind(next.label, next.detail, next.current, next.total, next.due_date, nowISO(), id)
+    .run();
+
+  const actor = getActor(request, body);
+  await writeActivity(env, { actor, action: 'target_updated', note: next.label });
+
+  const target = await env.DB.prepare('SELECT * FROM targets WHERE id = ?').bind(id).first();
+  return json({ target });
+}
+
+// ---- ./functions/api/captures.js ----
+// POST /api/captures — drop a raw capture into the Inbox.
+// Body: { body (required), actor } — the author is whoever is acting.
+// Captures are never edited; the only lifecycle is the filed toggle.
+
+async function hCapturesPost({ request, env }) {
+  await ensureCapturesTable(env);
+
+  const body = await parseBody(request);
+  if (!body) return err('Body must be valid JSON.', 400);
+
+  const text = cleanStr(body.body, 5000).trim();
+  if (!text) return err('body is required.', 400);
+
+  const actor = getActor(request, body);
+  const result = await env.DB.prepare(
+    'INSERT INTO captures (body, author, filed, created_at) VALUES (?, ?, 0, ?)'
+  )
+    .bind(text, actor, nowISO())
+    .run();
+
+  const note = text.split('\n')[0].slice(0, 80);
+  await writeActivity(env, { actor, action: 'capture_added', note });
+
+  const capture = await env.DB.prepare('SELECT * FROM captures WHERE id = ?')
+    .bind(result.meta.last_row_id)
+    .first();
+  return json({ capture }, 201);
+}
+
+// ---- ./functions/api/captures/[id].js ----
+// PATCH /api/captures/:id — the filed toggle. Filed means Nayden has
+// triaged the capture into the board/digest; unfiling puts it back.
+
+async function hCapturePatch({ request, env, params }) {
+  await ensureCapturesTable(env);
+
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) return err('Invalid capture id.', 400);
+
+  const existing = await env.DB.prepare('SELECT * FROM captures WHERE id = ?').bind(id).first();
+  if (!existing) return err('Capture not found.', 404);
+
+  const body = await parseBody(request);
+  if (!body) return err('Body must be valid JSON.', 400);
+  if (!('filed' in body)) return err('filed is required.', 400);
+
+  const filed = body.filed ? 1 : 0;
+  await env.DB.prepare('UPDATE captures SET filed = ? WHERE id = ?').bind(filed, id).run();
+
+  const actor = getActor(request, body);
+  await writeActivity(env, {
+    actor,
+    action: filed ? 'capture_filed' : 'capture_unfiled',
+    note: String(existing.body || '').split('\n')[0].slice(0, 80),
+  });
+
+  const capture = await env.DB.prepare('SELECT * FROM captures WHERE id = ?').bind(id).first();
+  return json({ capture });
+}
+
+// ---- ./functions/api/people.js ----
+// POST /api/people — add a person to Follow-ups.
+// Body: { name (required), context, note, next_step, channel, actor }
+
+async function hPeoplePost({ request, env }) {
+  await ensurePeopleTable(env);
+
+  const body = await parseBody(request);
+  if (!body) return err('Body must be valid JSON.', 400);
+
+  const name = cleanStr(body.name, 200).trim();
+  if (!name) return err('name is required.', 400);
+
+  const channel = cleanStr(body.channel, 40).trim().toLowerCase() || 'email';
+
+  const actor = getActor(request, body);
+  const ts = nowISO();
+  const result = await env.DB.prepare(
+    'INSERT INTO people (name, context, note, next_step, channel, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  )
+    .bind(
+      name,
+      cleanStr(body.context, 1000),
+      cleanStr(body.note, 2000),
+      cleanStr(body.next_step, 1000),
+      channel,
+      actor,
+      ts,
+      ts
+    )
+    .run();
+
+  await writeActivity(env, { actor, action: 'person_added', note: name });
+
+  const person = await env.DB.prepare('SELECT * FROM people WHERE id = ?')
+    .bind(result.meta.last_row_id)
+    .first();
+  return json({ person }, 201);
+}
+
+// ---- ./functions/api/people/[id].js ----
+// PATCH /api/people/:id — partial update of name, context, note,
+// next_step and channel.
+
+async function hPersonPatch({ request, env, params }) {
+  await ensurePeopleTable(env);
+
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) return err('Invalid person id.', 400);
+
+  const existing = await env.DB.prepare('SELECT * FROM people WHERE id = ?').bind(id).first();
+  if (!existing) return err('Person not found.', 404);
+
+  const body = await parseBody(request);
+  if (!body) return err('Body must be valid JSON.', 400);
+
+  const next = { ...existing };
+
+  if ('name' in body) {
+    const name = cleanStr(body.name, 200).trim();
+    if (!name) return err('name cannot be empty.', 400);
+    next.name = name;
+  }
+  if ('context' in body) next.context = cleanStr(body.context, 1000);
+  if ('note' in body) next.note = cleanStr(body.note, 2000);
+  if ('next_step' in body) next.next_step = cleanStr(body.next_step, 1000);
+  if ('channel' in body) {
+    next.channel = cleanStr(body.channel, 40).trim().toLowerCase() || 'email';
+  }
+
+  await env.DB.prepare(
+    'UPDATE people SET name = ?, context = ?, note = ?, next_step = ?, channel = ?, updated_at = ? WHERE id = ?'
+  )
+    .bind(next.name, next.context, next.note, next.next_step, next.channel, nowISO(), id)
+    .run();
+
+  const actor = getActor(request, body);
+  await writeActivity(env, { actor, action: 'person_updated', note: next.name });
+
+  const person = await env.DB.prepare('SELECT * FROM people WHERE id = ?').bind(id).first();
+  return json({ person });
+}
+
 const INDEX_HTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -954,8 +1380,6 @@ main {
 }
 .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.55rem; }
 .card-head h2 { font-size: 1.05rem; font-weight: 700; }
-.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
-.section-head h2 { font-size: 1.05rem; font-weight: 700; }
 .quiet-link {
   background: none;
   border: none;
@@ -981,8 +1405,20 @@ main {
 @media (max-width: 1080px) {
   .today-grid { grid-template-columns: 1fr; }
 }
-.counts-line { margin: 0.2rem 0.3rem 0; color: var(--muted); font-size: 0.86rem; }
-
+/* ---------- load error note ---------- */
+.load-error {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  background: var(--rose-bg);
+  color: var(--red);
+  border: 1px solid #e5c4b8;
+  border-radius: 12px;
+  padding: 0.7rem 1rem;
+  margin-bottom: 1.1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
 /* ---------- brief panel (deep green) ---------- */
 .brief-panel {
   background: var(--panel-green);
@@ -1036,20 +1472,53 @@ main {
 .owner-dot-Instinct { background: #8a9078; }
 .attention-row .chip { margin-top: 2px; }
 
-/* ---------- activity ---------- */
-.activity-block { margin-top: 1.6rem; }
-.activity-item {
+/* ---------- monthly target banner ---------- */
+.target-banner {
   display: flex;
-  gap: 0.6rem;
-  align-items: flex-start;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--line-soft);
-  color: var(--ink-soft);
-  font-size: 0.85rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  text-align: left;
+  background: var(--butter-bg);
+  border: 1px solid #eadfae;
+  border-radius: 16px;
+  padding: 1.05rem 1.4rem;
+  margin-bottom: 1.1rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: box-shadow 0.15s ease;
 }
-.activity-item:last-child { border-bottom: none; }
-.activity-item .actor { font-weight: 600; color: var(--ink); }
+.target-banner:hover { box-shadow: var(--shadow-lift); }
+.target-banner:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.target-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.target-eyebrow {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--caramel);
+}
+.target-label { font-size: 1.05rem; font-weight: 700; color: var(--ink); }
+.target-progress { color: var(--ink-soft); font-size: 0.95rem; white-space: nowrap; }
 
+/* ---------- tasks card (today) ---------- */
+.tasks-count { color: var(--muted); font-weight: 600; font-size: 0.95rem; margin-left: 0.3rem; }
+.tasks-foot { padding: 0.7rem 0 0.3rem; border-top: 1px solid var(--line-soft); margin-top: 0.2rem; }
+.priority-tag { color: var(--caramel); font-weight: 600; }
+
+/* ---------- sidebar badge ---------- */
+.tab-badge {
+  margin-left: auto;
+  background: var(--panel);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.28rem 0.5rem;
+}
+.tab.active .tab-badge { background: rgba(255, 255, 255, 0.22); color: #fff; }
 /* ---------- deadlines card (today rail) ---------- */
 .deadlines-card { padding-bottom: 0.65rem; }
 .dl-row {
@@ -1075,72 +1544,69 @@ main {
 .dl-title { font-weight: 600; font-size: 0.93rem; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 0.15s ease; }
 .dl-context { color: var(--muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* ---------- week strip (this week card) ---------- */
-.week-nav { display: flex; align-items: center; gap: 0.15rem; }
-.week { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.3rem; }
-.week-nav-btn {
-  flex: 0 0 auto;
-  border: none;
-  background: none;
-  padding: 0.35rem 0.4rem;
-  border-radius: 8px;
+/* ---------- schedule card (today rail) ---------- */
+.sched-row { display: flex; gap: 0.85rem; align-items: stretch; margin-top: 0.55rem; }
+.sched-row:first-child { margin-top: 0.2rem; }
+.sched-time {
+  flex: 0 0 46px;
+  padding-top: 0.62rem;
   color: var(--muted);
-  font-family: inherit;
-  font-size: 1.3rem;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  font-size: 0.83rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
-.week-nav-btn:hover { background: var(--sage-soft); color: var(--green); }
-.week-nav-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
-.week-day {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.1rem;
-  padding: 0.55rem 0 0.95rem;
-  border: none;
-  background: none;
-  font: inherit;
-  border-radius: 10px;
-  color: var(--ink-soft);
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-.week-day:hover { background: var(--sage-soft); }
-.week-day:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
-.week-letter { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em; color: var(--muted); }
-.week-num { font-size: 1rem; font-weight: 700; line-height: 1.15; color: var(--ink); }
-.week-day.today { background: var(--green); }
-.week-day.today:hover { background: var(--deep); }
-.week-day.today .week-letter { color: rgba(255, 255, 255, 0.72); }
-.week-day.today .week-num { color: #fff; }
-.week-dot {
-  position: absolute;
-  bottom: 0.42rem;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--caramel);
-}
-.week-day.today .week-dot { background: var(--butter); }
-
-/* today's dated items, under the week strip */
-.today-item {
-  margin-top: 0.55rem;
+.sched-block {
+  flex: 1;
+  min-width: 0;
   padding: 0.6rem 0.8rem;
   border-left: 3px solid var(--green);
   border-radius: 10px;
   background: var(--sage-soft);
 }
-.today-item.tint-butter { background: var(--butter-bg); border-left-color: #c39a1d; }
-.today-item.tint-rose { background: var(--rose-bg); border-left-color: var(--red); }
+.sched-block.tint-butter { background: var(--butter-bg); border-left-color: #c39a1d; }
+.sched-block.tint-rose { background: var(--rose-bg); border-left-color: var(--red); }
 .ti-title { font-weight: 600; font-size: 0.9rem; line-height: 1.3; }
 .ti-sub { color: var(--muted); font-size: 0.78rem; margin-top: 0.1rem; }
-.today-items-empty { margin: 0.6rem 0 0.2rem; }
+
+/* ---------- inbox (captures) ---------- */
+.capture-card { margin-bottom: 0.7rem; }
+.capture-body { white-space: pre-wrap; font-size: 0.94rem; word-break: break-word; }
+.capture-meta { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; margin-top: 0.6rem; }
+.capture-card.filed { opacity: 0.55; }
+.filed-head { margin: 1.2rem 0 0.6rem; font-size: 0.95rem; }
+
+/* ---------- follow-ups (people) ---------- */
+.person-row {
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-start;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1rem 1.2rem;
+  margin-bottom: 0.7rem;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease;
+}
+.person-row:hover { box-shadow: var(--shadow-lift); }
+.person-name { font-weight: 700; font-size: 1rem; }
+.person-context { color: var(--ink-soft); font-size: 0.9rem; margin-top: 0.1rem; }
+.person-note { color: var(--muted); font-size: 0.88rem; margin-top: 0.25rem; }
+.person-next { color: var(--ink-soft); font-size: 0.9rem; margin-top: 0.35rem; }
+.person-next-label {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-right: 0.35rem;
+}
+.channel-chip { background: var(--sage-soft); color: var(--ink-soft); flex: 0 0 auto; }
+
+/* ---------- monthly target (projects view) ---------- */
+.target-summary-label { font-weight: 700; font-size: 1.02rem; }
+.target-summary-progress { margin-top: 0.3rem; color: var(--ink-soft); }
 
 /* ---------- chips ---------- */
 .chip {
@@ -1462,9 +1928,14 @@ main {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.8"/><rect x="13" y="4" width="7" height="7" rx="1.8"/><rect x="4" y="13" width="7" height="7" rx="1.8"/><rect x="13" y="13" width="7" height="7" rx="1.8"/></svg>
           <span>Today</span>
         </button>
+        <button data-view="inbox" class="tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 13.6 5.7 6.7A2 2 0 0 1 7.6 5.3h8.8a2 2 0 0 1 1.9 1.4l2.2 6.9v3a1.9 1.9 0 0 1-1.9 1.9H5.4a1.9 1.9 0 0 1-1.9-1.9z"/><path d="M3.5 13.6h5.2a3.3 3.3 0 0 0 6.6 0h5.2"/></svg>
+          <span>Inbox</span>
+          <span class="tab-badge hidden" id="inboxBadge">0</span>
+        </button>
         <button data-view="board" class="tab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="m8.7 12.3 2.3 2.3 4.3-4.8"/></svg>
-          <span>Tasks</span>
+          <span>My tasks</span>
         </button>
         <button data-view="calendar" class="tab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.8h17"/><path d="M8 3v3.6M16 3v3.6"/></svg>
@@ -1483,8 +1954,12 @@ main {
           <span>Reports</span>
         </button>
         <button data-view="agents" class="tab">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8.4" r="3.4"/><path d="M3.6 19.6c.6-3 2.7-4.7 5.4-4.7s4.8 1.7 5.4 4.7"/><circle cx="17.2" cy="9.4" r="2.5"/><path d="M16.2 15.1c2.1.3 3.6 1.8 4.1 4.1"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4.2c.55 4.15 2.2 5.8 6.3 6.3-4.1.5-5.75 2.15-6.3 6.3-.55-4.15-2.2-5.8-6.3-6.3 4.1-.5 5.75-2.15 6.3-6.3Z"/><path d="M18.3 15.6c.3 2.25 1.2 3.15 3.4 3.4-2.2.25-3.1 1.15-3.4 3.4-.3-2.25-1.2-3.15-3.4-3.4 2.2-.25 3.1-1.15 3.4-3.4Z"/></svg>
           <span>Agents</span>
+        </button>
+        <button data-view="followups" class="tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8.4" r="3.4"/><path d="M3.6 19.6c.6-3 2.7-4.7 5.4-4.7s4.8 1.7 5.4 4.7"/><circle cx="17.2" cy="9.4" r="2.5"/><path d="M16.2 15.1c2.1.3 3.6 1.8 4.1 4.1"/></svg>
+          <span>Follow-ups</span>
         </button>
       </nav>
 
@@ -1513,6 +1988,11 @@ main {
     </aside>
 
     <main>
+    <div id="loadError" class="load-error hidden">
+      <span>Could not load the board just now.</span>
+      <button type="button" class="btn btn-ghost btn-small" id="loadRetryBtn">Retry</button>
+    </div>
+
     <!-- ============ TODAY ============ -->
     <section id="view-today" class="view">
       <div class="view-head">
@@ -1526,55 +2006,74 @@ main {
       </div>
 
       <div class="today-grid">
-      <div class="today-main">
-        <div class="brief-panel">
-          <div class="brief-head">
-            <span class="brief-label">Brief</span>
-            <span class="brief-meta" id="todayDigestMeta"></span>
+        <div class="today-main">
+          <div class="brief-panel">
+            <div class="brief-head">
+              <span class="brief-label">Brief</span>
+              <span class="brief-meta" id="todayDigestMeta"></span>
+            </div>
+            <h2 class="brief-title" id="todayDigestTitle">Latest digest</h2>
+            <div id="todayDigestBody" class="markdown brief-body"></div>
           </div>
-          <h2 class="brief-title" id="todayDigestTitle">Latest digest</h2>
-          <div id="todayDigestBody" class="markdown brief-body"></div>
         </div>
 
-        <section class="card attention-card">
-          <div class="card-head">
-            <h2>What deserves your attention</h2>
-            <span class="muted" id="attentionCount"></span>
+        <aside class="today-rail">
+          <div class="card deadlines-card">
+            <div class="card-head">
+              <h2>Deadlines</h2>
+              <button type="button" class="quiet-link" id="deadlinesMore">Next 14 days <span aria-hidden="true">&#8594;</span></button>
+            </div>
+            <div id="todayDeadlines"></div>
           </div>
-          <div id="dueNowList"></div>
-        </section>
-
-        <section class="activity-block">
-          <div class="section-head"><h2>Recent activity</h2></div>
-          <div id="activityList"></div>
-        </section>
+        </aside>
       </div>
 
-      <aside class="today-rail">
-        <div class="card deadlines-card">
-          <div class="card-head">
-            <h2>Deadlines</h2>
-            <button type="button" class="quiet-link" id="deadlinesMore">Next 14 days <span aria-hidden="true">&#8594;</span></button>
-          </div>
-          <div id="todayDeadlines"></div>
+      <button type="button" class="target-banner hidden" id="targetBanner">
+        <span class="target-text">
+          <span class="target-eyebrow" id="targetEyebrow"></span>
+          <span class="target-label" id="targetLabel"></span>
+        </span>
+        <span class="target-progress"><span id="targetProgress"></span> <span aria-hidden="true">&#8594;</span></span>
+      </button>
+
+      <div class="today-grid">
+        <div class="today-main">
+          <section class="card tasks-card">
+            <div class="card-head">
+              <h2>Tasks <span class="tasks-count" id="todayTasksCount"></span></h2>
+            </div>
+            <div id="todayTasks"></div>
+            <div class="tasks-foot hidden" id="todayTasksFoot">
+              <button type="button" class="quiet-link" id="todayTasksMore">View all <span aria-hidden="true">&#8594;</span></button>
+            </div>
+          </section>
         </div>
 
-        <div class="card week-card">
-          <div class="card-head">
-            <h2>This week</h2>
-            <span class="muted" id="weekRange"></span>
+        <aside class="today-rail">
+          <div class="card schedule-card">
+            <div class="card-head"><h2>Schedule</h2></div>
+            <div id="scheduleList"></div>
           </div>
-          <div class="week-nav">
-            <button type="button" class="week-nav-btn" id="weekPrev" aria-label="Previous week">&#8249;</button>
-            <div id="weekStrip" class="week"></div>
-            <button type="button" class="week-nav-btn" id="weekNext" aria-label="Next week">&#8250;</button>
-          </div>
-          <div id="todayItems"></div>
-        </div>
-
-        <p class="counts-line" id="statsRow"></p>
-      </aside>
+        </aside>
       </div>
+    </section>
+
+    <!-- ============ INBOX ============ -->
+    <section id="view-inbox" class="view hidden">
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Notes, links, half-formed thoughts</p>
+          <h1 class="view-title">Inbox</h1>
+        </div>
+      </div>
+      <form id="captureForm" class="card capture-form">
+        <label>Drop something in
+          <textarea id="captureBody" rows="3" required placeholder="Drop a note, a link, a half-formed thought…"></textarea>
+        </label>
+        <p class="form-error" id="captureError"></p>
+        <button type="submit" class="btn btn-primary">Add to inbox</button>
+      </form>
+      <div id="captureList"></div>
     </section>
 
     <!-- ============ TASKS (BOARD) ============ -->
@@ -1582,7 +2081,7 @@ main {
       <div class="view-head">
         <div>
           <p class="eyebrow">The board</p>
-          <h1 class="view-title">Tasks</h1>
+          <h1 class="view-title">My tasks</h1>
         </div>
         <div class="head-actions">
           <label class="filter-label" for="ownerFilter">Owner
@@ -1668,6 +2167,13 @@ main {
           <button id="newProjectBtn" class="btn btn-primary">Add project</button>
         </div>
       </div>
+      <div class="card target-card">
+        <div class="card-head">
+          <h2>Monthly target</h2>
+          <button type="button" class="btn btn-ghost btn-small" id="editTargetBtn">Edit</button>
+        </div>
+        <div id="targetSummary"></div>
+      </div>
       <div id="projectList" class="project-list"></div>
       <p class="muted board-hint">Projects are their own section, like Deadlines. Tasks are not filed under projects — they stay on the board.</p>
     </section>
@@ -1727,12 +2233,14 @@ main {
         </ol>
         <h3>How the board is organised</h3>
         <ul>
-          <li><strong>Today</strong> — the morning brief, the deadlines card, this week's calendar, and what deserves attention.</li>
-          <li><strong>Tasks</strong> — the board: To Do / In Progress / Waiting on Jesutofunmi / Done.</li>
+          <li><strong>Today</strong> — the morning brief, the Deadlines card, the monthly target, then the day's Tasks and Schedule.</li>
+          <li><strong>Inbox</strong> — raw captures: notes, links, half-formed thoughts, dropped by anyone. Nayden triages them in the morning sync and marks them filed.</li>
+          <li><strong>My tasks</strong> — the board: To Do / In Progress / Waiting on Jesutofunmi / Done.</li>
           <li><strong>Calendar</strong> — deadlines and task due dates on a month grid.</li>
           <li><strong>Deadlines</strong> — the dated commitments. If you learn a new deadline, add it.</li>
-          <li><strong>Projects</strong> — the standing areas of work. Projects are their own section; tasks are not filed under them.</li>
+          <li><strong>Projects</strong> — the standing areas of work, and the monthly target shown on Today. Projects are their own section; tasks are not filed under them.</li>
           <li><strong>Reports</strong> — one daily report per person. See &ldquo;Daily reports&rdquo; below.</li>
+          <li><strong>Follow-ups</strong> — the people Jesutofunmi is keeping in touch with, with the next step for each. If you learn someone should be contacted, add them here.</li>
           <li><strong>The Brief</strong> — Nayden posts the morning brief through the API and it appears as the green Brief panel on Today. There is no separate brief page.</li>
         </ul>
         <h3>Report what you learn</h3>
@@ -1740,7 +2248,8 @@ main {
         <ul>
           <li><strong>Deadlines</strong> go to Deadlines, with the date.</li>
           <li><strong>Finished or ongoing work</strong> goes on the board as a task, with the evidence on the card.</li>
-          <li><strong>Anything that fits neither</strong> goes to Nayden, who folds it into the morning brief.</li>
+          <li><strong>A person to contact</strong> goes to Follow-ups, with the next step.</li>
+          <li><strong>Anything that fits none of these</strong> — a note, a link, a half-formed thought — goes in the Inbox as a capture.</li>
         </ul>
         <p>Jesutofunmi adds things the same way when she has context nobody else does — there is no separate process for her. The rule of thumb: if it happened outside Nayden's view, it goes on the board.</p>
         <h3>Daily reports</h3>
@@ -1748,6 +2257,20 @@ main {
         <p>Jesutofunmi's report is the one exception to posting your own: she gives hers to Instinct, who posts it under her name. Nayden reads every report each morning, and the morning brief is the aggregation of them. A report is how work becomes visible to the whole team — if it is not reported, it may as well not have happened.</p>
         <p class="muted">When in doubt, leave a task Waiting with a clear note rather than improvising. A precise question beats a confident mistake.</p>
       </div>
+    </section>
+
+    <!-- ============ FOLLOW-UPS ============ -->
+    <section id="view-followups" class="view hidden">
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">People to keep in touch with</p>
+          <h1 class="view-title">Follow-ups</h1>
+        </div>
+        <div class="head-actions">
+          <button id="newPersonBtn" class="btn btn-primary">Add person</button>
+        </div>
+      </div>
+      <div id="peopleList"></div>
     </section>
     </main>
   </div>
@@ -1845,6 +2368,58 @@ main {
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" data-close="projectModal">Cancel</button>
       <button type="submit" class="btn btn-primary">Save project</button>
+    </div>
+  </form>
+</div>
+
+<!-- ============ TARGET EDITOR ============ -->
+<div id="targetModal" class="modal hidden">
+  <form id="targetForm" class="modal-card">
+    <div class="modal-head">
+      <h2 id="targetFormTitle">Monthly target</h2>
+      <button type="button" class="btn btn-ghost btn-small" data-close="targetModal">&#10005;</button>
+    </div>
+    <input type="hidden" id="targetId" />
+    <label>Target <input id="mtLabel" required maxlength="200" placeholder="Publish 4 hardware essays" /></label>
+    <label>Detail <input id="mtDetail" maxlength="500" placeholder="The Hardware Brief" /></label>
+    <div class="form-row">
+      <label>Done so far <input id="mtCurrent" type="number" min="0" step="1" /></label>
+      <label>Out of <input id="mtTotal" type="number" min="0" step="1" /></label>
+      <label>Due <input id="mtDue" type="date" /></label>
+    </div>
+    <p class="form-error" id="mtError"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" data-close="targetModal">Cancel</button>
+      <button type="submit" class="btn btn-primary">Save target</button>
+    </div>
+  </form>
+</div>
+
+<!-- ============ PERSON EDITOR ============ -->
+<div id="personModal" class="modal hidden">
+  <form id="personForm" class="modal-card">
+    <div class="modal-head">
+      <h2 id="personFormTitle">Add person</h2>
+      <button type="button" class="btn btn-ghost btn-small" data-close="personModal">&#10005;</button>
+    </div>
+    <input type="hidden" id="personId" />
+    <label>Name <input id="personName" required maxlength="200" /></label>
+    <label>Who they are <textarea id="personContext" rows="2"></textarea></label>
+    <label>Why they are on the list <textarea id="personNote" rows="3"></textarea></label>
+    <label>Next step <textarea id="personNextStep" rows="2"></textarea></label>
+    <label>Channel
+      <select id="personChannel">
+        <option value="email">Email</option>
+        <option value="whatsapp">WhatsApp</option>
+        <option value="phone">Phone</option>
+        <option value="linkedin">LinkedIn</option>
+        <option value="other">Other</option>
+      </select>
+    </label>
+    <p class="form-error" id="personError"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" data-close="personModal">Cancel</button>
+      <button type="submit" class="btn btn-primary">Save person</button>
     </div>
   </form>
 </div>
@@ -2072,53 +2647,9 @@ function dueChip(task) {
 
 /* ================= today ================= */
 
-const ACTION_LABELS = {
-  created: 'created a task',
-  status_changed: 'changed a task status',
-  updated: 'edited a task',
-  digest_posted: 'posted a digest',
-  deadline_added: 'added a deadline',
-  deadline_updated: 'updated a deadline',
-  report_posted: 'posted a daily report',
-  project_added: 'added a project',
-  project_updated: 'updated a project',
-};
-
-/* ---------- week calendar (This week card) ----------
-   One Sunday–Saturday week at a time; weekOffset moves it with the
-   chevrons. Days are real buttons: a click jumps to that date in the
-   Deadlines view, flashing its rows — or landing on the nearest
-   deadline when the day itself has none, so it never feels dead. */
-
-let weekOffset = 0;
-
-function renderWeekStrip() {
-  if (!state) return;
-  const deadlines = state.deadlines || [];
-  const deadlineDates = new Set(deadlines.map((d) => d.date));
-  const sunday = parseDay(todayStr());
-  sunday.setDate(sunday.getDate() - sunday.getDay() + weekOffset * 7);
-  const weekLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-  let weekHtml = '';
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(sunday);
-    d.setDate(sunday.getDate() + i);
-    const iso = isoOf(d);
-    const count = deadlines.filter((x) => x.date === iso).length;
-    const label = \`\${fmtDate(iso)}\${count ? \` — \${count} deadline\${count > 1 ? 's' : ''}\` : ''}\`;
-    weekHtml += \`<button type="button" class="week-day\${iso === todayStr() ? ' today' : ''}" data-week-date="\${iso}" aria-label="\${esc(label)}" title="\${esc(label)}"><span class="week-letter">\${weekLetters[i]}</span><span class="week-num">\${d.getDate()}</span>\${deadlineDates.has(iso) ? '<span class="week-dot"></span>' : ''}</button>\`;
-  }
-  $('#weekStrip').innerHTML = weekHtml;
-
-  const end = new Date(sunday);
-  end.setDate(sunday.getDate() + 6);
-  const startLabel = sunday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const endLabel = sunday.getMonth() === end.getMonth()
-    ? String(end.getDate())
-    : end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  $('#weekRange').textContent = \`\${startLabel} – \${endLabel}\`;
-}
-
+// Jump to a date in the Deadlines view, flashing its rows — or landing
+// on the nearest deadline when the day itself has none. Used by the
+// Today Deadlines card and the Calendar view.
 function gotoDeadlineDate(iso) {
   showView('deadlines');
   const rows = [...document.querySelectorAll('#deadlineList .deadline-row')];
@@ -2139,13 +2670,8 @@ function gotoDeadlineDate(iso) {
   }
 }
 
-$('#weekStrip').addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-week-date]');
-  if (btn) gotoDeadlineDate(btn.dataset.weekDate);
-});
-$('#weekPrev').addEventListener('click', () => { weekOffset -= 1; renderWeekStrip(); });
-$('#weekNext').addEventListener('click', () => { weekOffset += 1; renderWeekStrip(); });
 $('#deadlinesMore').addEventListener('click', () => showView('deadlines'));
+$('#todayTasksMore').addEventListener('click', () => showView('board'));
 
 // Relative chip for the Today deadlines card, tinted by closeness:
 // rose for overdue/today/2 days out, butter for 3–4, grey beyond.
@@ -2161,31 +2687,12 @@ function relChip(d) {
 function renderToday() {
   const tasks = state.tasks || [];
   const open = tasks.filter((t) => t.status !== 'done');
-  const waiting = tasks.filter((t) => t.status === 'waiting');
-  const weekAgo = Date.now() - 7 * 86400000;
-  const doneWeek = tasks.filter((t) => t.status === 'done' && new Date(t.updated_at).getTime() >= weekAgo);
-  // Priority order for the attention list: overdue first, then tasks
-  // waiting on Jesutofunmi, then the rest — each group by due ascending.
-  // The first row is therefore the day's top item; there is no separate
-  // focus panel repeating it.
-  const priorityGroup = (t) => (daysUntil(t.due) < 0 ? 0 : t.status === 'waiting' ? 1 : 2);
-  const byPriority = (a, b) =>
-    priorityGroup(a) - priorityGroup(b) || a.due.localeCompare(b.due);
-  const dueNow = open
-    .filter((t) => t.due && daysUntil(t.due) <= 3)
-    .sort(byPriority);
 
   // Eyebrow: the real date (styled uppercase by CSS).
   const now = new Date();
   const weekday = now.toLocaleDateString('en-US', { weekday: 'short' });
   const monthName = now.toLocaleDateString('en-US', { month: 'short' });
   $('#todayEyebrow').textContent = \`\${weekday}, \${monthName} \${now.getDate()}\`;
-
-  renderWeekStrip();
-
-  // One quiet line of counts — these numbers live here and nowhere else.
-  $('#statsRow').textContent =
-    \`\${open.length} open · \${waiting.length} waiting on you · \${doneWeek.length} done this week\`;
 
   // The Brief: the latest digest, white on deep green.
   const digest = state.latestDigest;
@@ -2199,19 +2706,38 @@ function renderToday() {
     $('#todayDigestBody').innerHTML = '<p class="muted">The first brief will appear here.</p>';
   }
 
-  // What deserves your attention: tasks-style rows. Clicking opens the editor.
-  $('#attentionCount').textContent = dueNow.length ? String(dueNow.length) : '';
-  $('#dueNowList').innerHTML = dueNow.length
-    ? dueNow.map((t) => \`
+  // Tasks card: open tasks in priority order — overdue first, then tasks
+  // waiting on Jesutofunmi, then the rest, each group by due date (no due
+  // date last). Six rows at most; the rest sit behind "View all". The
+  // circle does not complete anything (Done needs evidence) — the whole
+  // row, circle included, opens the task editor.
+  const priorityGroup = (t) => (t.due && daysUntil(t.due) < 0 ? 0 : t.status === 'waiting' ? 1 : 2);
+  const byPriority = (a, b) =>
+    priorityGroup(a) - priorityGroup(b) ||
+    (a.due || '9999-12-31').localeCompare(b.due || '9999-12-31') ||
+    a.id - b.id;
+  const shownTasks = [...open].sort(byPriority).slice(0, 6);
+  $('#todayTasksCount').textContent = open.length ? String(open.length) : '';
+  $('#todayTasks').innerHTML = shownTasks.length
+    ? shownTasks.map((t) => {
+        const meta = [esc(t.owner)];
+        if (t.due) {
+          const days = daysUntil(t.due);
+          meta.push(days < 0 ? 'Overdue' : days === 0 ? 'Due today' : \`Due \${fmtDate(t.due)}\`);
+        }
+        if (priorityGroup(t) < 2) meta.push('<span class="priority-tag">Priority</span>');
+        return \`
         <div class="attention-row" data-open-task="\${t.id}" role="button" tabindex="0">
           <span class="att-circle" aria-hidden="true"></span>
           <div class="grow">
             <div class="att-title">\${esc(t.title)}</div>
-            <div class="att-meta"><span class="owner-dot owner-dot-\${esc(t.owner)}"></span><span>\${esc(t.owner)}\${t.status === 'waiting' ? ' · waiting on you' : ''}</span></div>
+            <div class="att-meta"><span class="owner-dot owner-dot-\${esc(t.owner)}"></span><span>\${meta.join(' · ')}</span></div>
           </div>
           \${dueChip(t)}
-        </div>\`).join('')
-    : '<p class="muted">Nothing overdue, and nothing due in the next 72 hours.</p>';
+        </div>\`;
+      }).join('')
+    : '<p class="muted">Nothing open right now.</p>';
+  $('#todayTasksFoot').classList.toggle('hidden', open.length <= 6);
 
   // Deadlines card: overdue and today's first, then the next ones out to
   // 14 days, five at most. Clicking a row jumps to it in Deadlines.
@@ -2236,32 +2762,264 @@ function renderToday() {
       }).join('')
     : '<p class="muted">No deadlines in the next 14 days.</p>';
 
-  // Under the week strip: whatever is dated today — deadlines due today
-  // first, then open tasks due today — as tinted blocks.
-  const t = todayStr();
-  const dlToday = (state.deadlines || []).filter((d) => d.date === t);
-  const tasksToday = open.filter((x) => x.due === t);
-  const tintCycle = ['tint-sage', 'tint-butter', 'tint-rose'];
-  const blocks = [
-    ...dlToday.map((d) => ({ title: d.title, sub: \`Deadline · \${d.owner}\` })),
-    ...tasksToday.map((x) => ({ title: x.title, sub: \`Task · \${x.owner}\` })),
-  ];
-  $('#todayItems').innerHTML = blocks.length
-    ? blocks.map((b, i) => \`
-        <div class="today-item \${tintCycle[i % tintCycle.length]}">
-          <div class="ti-title">\${esc(b.title)}</div>
-          <div class="ti-sub">\${esc(b.sub)}</div>
-        </div>\`).join('')
-    : '<p class="muted today-items-empty">Nothing dated today.</p>';
-
-  $('#activityList').innerHTML = (state.activity || []).length
-    ? state.activity.map((a) => \`
-        <div class="activity-item">
-          <div class="grow"><span class="actor">\${esc(a.actor)}</span> \${esc(ACTION_LABELS[a.action] || a.action)}\${a.note ? \` — \${esc(a.note)}\` : ''}</div>
-          <span class="muted">\${esc(fmtDateTime(a.created_at))}</span>
-        </div>\`).join('')
-    : '<p class="muted">No activity yet.</p>';
+  renderSchedule();
 }
+
+/* ---------- schedule card ----------
+   Today's dated items: deadlines due today and open tasks due today, as
+   tinted blocks. The time gutter is honest: a time shows only when the
+   item itself carries one in its title or notes (e.g. a session whose
+   notes hold "6:00–8:00 PM CT") — never an invented one. */
+
+function extractTime(text) {
+  if (!text) return null;
+  const s = String(text);
+  const toMinutes = (h, min, mer) =>
+    mer ? ((h % 12) + (mer === 'PM' ? 12 : 0)) * 60 + min : h * 60 + min;
+  const label = (h, min, mer) =>
+    mer ? \`\${h}:\${String(min).padStart(2, '0')} \${mer}\` : \`\${String(h).padStart(2, '0')}:\${String(min).padStart(2, '0')}\`;
+  // Range first: a trailing AM/PM on the range end applies to the start.
+  let m = s.match(/(\\d{1,2}):(\\d{2})\\s*(?:–|—|-|\\bto\\b)\\s*(\\d{1,2}):(\\d{2})\\s*(AM|PM)?/i);
+  if (m) {
+    const mer = m[5] ? m[5].toUpperCase() : null;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    return { label: label(h, min, mer), minutes: toMinutes(h, min, mer) };
+  }
+  m = s.match(/(\\d{1,2}):(\\d{2})\\s*(AM|PM)?/i);
+  if (!m) return null;
+  const mer = m[3] ? m[3].toUpperCase() : null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  return { label: label(h, min, mer), minutes: toMinutes(h, min, mer) };
+}
+
+// Remove time expressions (and timezone tags) from a detail line so what
+// remains can sit beside the time in the gutter without repeating it.
+function stripTimes(text) {
+  return String(text || '')
+    .replace(/\\d{1,2}:\\d{2}\\s*(?:–|—|-|\\bto\\b)\\s*\\d{1,2}:\\d{2}\\s*(AM|PM)?/gi, '')
+    .replace(/\\d{1,2}:\\d{2}\\s*(AM|PM)?/gi, '')
+    .replace(/\\b(CT|ET|PT|MT|CST|EST|PST|MST|CDT|EDT|PDT|MDT)\\b/g, '')
+    .replace(/^[~\\s,;·—-]+|[~\\s,;·—-]+$/g, '')
+    .replace(/\\s{2,}/g, ' ')
+    .trim();
+}
+
+function renderSchedule() {
+  const t = todayStr();
+  const items = [];
+  (state.deadlines || []).filter((d) => d.date === t).forEach((d) => {
+    const time = extractTime(\`\${d.title} \${d.notes || ''}\`);
+    const rest = stripTimes(d.notes || '');
+    items.push({ title: d.title, sub: rest || \`Deadline · \${d.owner}\`, time });
+  });
+  (state.tasks || []).filter((x) => x.status !== 'done' && x.due === t).forEach((x) => {
+    const time = extractTime(\`\${x.title} \${x.details || ''}\`);
+    items.push({
+      title: x.title,
+      sub: \`Task · \${x.owner}\${x.status === 'waiting' ? ' · waiting on you' : ''}\`,
+      time,
+    });
+  });
+  items.sort((a, b) => {
+    if (a.time && b.time) return a.time.minutes - b.time.minutes;
+    if (a.time) return -1;
+    if (b.time) return 1;
+    return 0;
+  });
+  const tints = ['tint-sage', 'tint-butter', 'tint-rose'];
+  $('#scheduleList').innerHTML = items.length
+    ? items.map((it, i) => \`
+        <div class="sched-row">
+          <span class="sched-time">\${it.time ? esc(it.time.label) : ''}</span>
+          <div class="sched-block \${tints[i % tints.length]}">
+            <div class="ti-title">\${esc(it.title)}</div>
+            <div class="ti-sub">\${esc(it.sub)}</div>
+          </div>
+        </div>\`).join('')
+    : '<p class="muted">Nothing scheduled today.</p>';
+}
+
+/* ================= monthly target ================= */
+
+function activeTarget() {
+  const targets = (state && state.targets) || [];
+  return targets.length ? targets[0] : null; // state orders earliest due first
+}
+
+function renderTarget() {
+  const target = activeTarget();
+  const banner = $('#targetBanner');
+  if (target) {
+    banner.classList.remove('hidden');
+    const dueLabel = target.due_date
+      ? parseDay(target.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      : 'no date set';
+    $('#targetEyebrow').textContent = \`Monthly target · \${dueLabel}\`;
+    $('#targetLabel').textContent = target.label;
+    $('#targetProgress').textContent = \`\${target.current} / \${target.total} published\`;
+  } else {
+    banner.classList.add('hidden');
+  }
+  $('#targetSummary').innerHTML = target
+    ? \`<div class="target-summary-label">\${esc(target.label)}</div>
+       \${target.detail ? \`<div class="muted">\${esc(target.detail)}</div>\` : ''}
+       <div class="target-summary-progress">\${target.current} / \${target.total} published\${target.due_date ? \` · due \${fmtDate(target.due_date)}\` : ''}</div>\`
+    : '<p class="muted">No monthly target set.</p>';
+  $('#editTargetBtn').textContent = target ? 'Edit' : 'Set target';
+}
+
+$('#targetBanner').addEventListener('click', () => showView('projects'));
+
+function openTargetEditor() {
+  const target = activeTarget();
+  $('#targetFormTitle').textContent = target ? 'Edit monthly target' : 'Set monthly target';
+  $('#targetId').value = target ? target.id : '';
+  $('#mtLabel').value = target ? target.label : '';
+  $('#mtDetail').value = target ? target.detail || '' : '';
+  $('#mtCurrent').value = target ? target.current : 0;
+  $('#mtTotal').value = target ? target.total : 0;
+  $('#mtDue').value = target && target.due_date ? target.due_date : '';
+  $('#mtError').textContent = '';
+  openModal('targetModal');
+}
+$('#editTargetBtn').addEventListener('click', openTargetEditor);
+
+$('#targetForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('#mtError').textContent = '';
+  const id = $('#targetId').value;
+  const payload = {
+    label: $('#mtLabel').value.trim(),
+    detail: $('#mtDetail').value,
+    current: Number($('#mtCurrent').value || 0),
+    total: Number($('#mtTotal').value || 0),
+    due_date: $('#mtDue').value || null,
+    actor,
+  };
+  try {
+    if (id) await api(\`/api/targets/\${id}\`, { method: 'PATCH', body: payload });
+    else await api('/api/targets', { method: 'POST', body: payload });
+    closeModal('targetModal');
+    await loadState();
+  } catch (err) {
+    $('#mtError').textContent = err.message;
+  }
+});
+
+/* ================= inbox ================= */
+
+function renderInbox() {
+  const captures = (state && state.captures) || [];
+  const unfiled = captures.filter((c) => !Number(c.filed));
+  const filed = captures.filter((c) => Number(c.filed));
+  const badge = $('#inboxBadge');
+  badge.textContent = String(unfiled.length);
+  badge.classList.toggle('hidden', unfiled.length === 0);
+
+  const card = (c, isFiled) => \`
+    <div class="card capture-card\${isFiled ? ' filed' : ''}">
+      <div class="capture-body">\${esc(c.body)}</div>
+      <div class="capture-meta">
+        <span class="muted">\${esc(c.author)} · \${esc(fmtDateTime(c.created_at))}</span>
+        <button type="button" class="btn btn-ghost btn-small" data-file-capture="\${c.id}" data-filed="\${isFiled ? 1 : 0}">\${isFiled ? 'Move back to inbox' : 'Mark filed'}</button>
+      </div>
+    </div>\`;
+  $('#captureList').innerHTML =
+    (unfiled.length
+      ? unfiled.map((c) => card(c, false)).join('')
+      : '<p class="muted">Nothing waiting. Drop the next thought above.</p>') +
+    (filed.length ? '<h3 class="filed-head">Filed</h3>' + filed.map((c) => card(c, true)).join('') : '');
+}
+
+$('#captureForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('#captureError').textContent = '';
+  try {
+    await api('/api/captures', { method: 'POST', body: { body: $('#captureBody').value, actor } });
+    $('#captureBody').value = '';
+    await loadState();
+  } catch (err) {
+    $('#captureError').textContent = err.message;
+  }
+});
+
+$('#captureList').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-file-capture]');
+  if (!btn) return;
+  try {
+    await api(\`/api/captures/\${btn.dataset.fileCapture}\`, {
+      method: 'PATCH',
+      body: { filed: btn.dataset.filed === '1' ? 0 : 1, actor },
+    });
+    await loadState();
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+/* ================= follow-ups ================= */
+
+const CHANNEL_LABELS = { email: 'Email', whatsapp: 'WhatsApp', phone: 'Phone', linkedin: 'LinkedIn', other: 'Other' };
+
+function renderFollowups() {
+  const people = (state && state.people) || [];
+  $('#peopleList').innerHTML = people.length
+    ? people.map((p) => \`
+        <div class="person-row" data-person-id="\${p.id}">
+          <div class="grow">
+            <div class="person-name">\${esc(p.name)}</div>
+            \${p.context ? \`<div class="person-context">\${esc(p.context)}</div>\` : ''}
+            \${p.note ? \`<div class="person-note">\${esc(p.note)}</div>\` : ''}
+            \${p.next_step ? \`<div class="person-next"><span class="person-next-label">Next step</span> \${esc(p.next_step)}</div>\` : ''}
+          </div>
+          <span class="chip channel-chip">\${esc(CHANNEL_LABELS[p.channel] || 'Email')}</span>
+        </div>\`).join('')
+    : '<p class="muted">No one on the list yet.</p>';
+  document.querySelectorAll('[data-person-id]').forEach((row) => {
+    row.addEventListener('click', () => {
+      const p = people.find((x) => x.id === Number(row.dataset.personId));
+      if (p) openPersonEditor(p);
+    });
+  });
+}
+
+function openPersonEditor(p) {
+  $('#personFormTitle').textContent = p ? 'Edit person' : 'Add person';
+  $('#personId').value = p ? p.id : '';
+  $('#personName').value = p ? p.name : '';
+  $('#personContext').value = p ? p.context || '' : '';
+  $('#personNote').value = p ? p.note || '' : '';
+  $('#personNextStep').value = p ? p.next_step || '' : '';
+  const channel = p && p.channel ? p.channel : 'email';
+  $('#personChannel').value = [...$('#personChannel').options].some((o) => o.value === channel) ? channel : 'other';
+  $('#personError').textContent = '';
+  openModal('personModal');
+}
+$('#newPersonBtn').addEventListener('click', () => openPersonEditor(null));
+
+$('#personForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('#personError').textContent = '';
+  const id = $('#personId').value;
+  const payload = {
+    name: $('#personName').value.trim(),
+    context: $('#personContext').value,
+    note: $('#personNote').value,
+    next_step: $('#personNextStep').value,
+    channel: $('#personChannel').value,
+    actor,
+  };
+  try {
+    if (id) await api(\`/api/people/\${id}\`, { method: 'PATCH', body: payload });
+    else await api('/api/people', { method: 'POST', body: payload });
+    closeModal('personModal');
+    await loadState();
+  } catch (err) {
+    $('#personError').textContent = err.message;
+  }
+});
 
 // Today deadlines-card rows jump to the date in the Deadlines view.
 $('#todayDeadlines').addEventListener('click', (e) => {
@@ -2744,13 +3502,45 @@ $('#reportForm').addEventListener('submit', async (e) => {
 
 function renderAll() {
   renderToday();
+  renderTarget();
+  renderInbox();
   renderBoard();
   renderCalendar();
   renderDeadlines();
   renderProjects();
   renderReports();
+  renderFollowups();
   refreshReportForm();
 }
+
+/* Sign-in is currently off by choice: the app shell is the default
+   landing page and /api/state answers openly. The gate may only appear
+   on a genuine 401 from the API (which api() handles itself) — never
+   because a state load hiccuped or a render threw. On load failure we
+   retry once, then show the shell with an inline error note. */
+
+function setLoadError(show) {
+  $('#loadError').classList.toggle('hidden', !show);
+}
+
+async function loadStateRetry() {
+  try {
+    await loadState();
+    setLoadError(false);
+    return;
+  } catch (err) {
+    if (err && err.message === 'Not signed in.') return; // genuine 401: gate already shown by api()
+  }
+  await new Promise((r) => setTimeout(r, 900));
+  try {
+    await loadState();
+    setLoadError(false);
+  } catch (err) {
+    if (err && err.message === 'Not signed in.') return;
+    setLoadError(true);
+  }
+}
+$('#loadRetryBtn').addEventListener('click', loadStateRetry);
 
 (function init() {
   const sel = $('#actorSelect');
@@ -2759,9 +3549,8 @@ function renderAll() {
   syncActorCard();
   $('#reportDate').value = todayStr();
   $('#reportAuthor').value = actor;
-  loadState()
-    .then(() => showApp())
-    .catch(() => showGate());
+  showApp();
+  loadStateRetry();
 })();
 
 </script>
@@ -2775,11 +3564,14 @@ export default {
     const path = url.pathname;
     if (path.startsWith('/api/')) {
       try {
-        // Self-migration (the _middleware equivalent): create the reports
-        // and projects tables if they are missing. Idempotent and cheap;
-        // runs before handlers.
+        // Self-migration (the _middleware equivalent): create the newer
+        // tables if they are missing. Idempotent and cheap; runs before
+        // handlers.
         await ensureReportsTable(env);
         await ensureProjectsTable(env);
+        await ensureTargetsTable(env);
+        await ensureCapturesTable(env);
+        await ensurePeopleTable(env);
         if (path === '/api/auth') {
           if (request.method !== 'POST') return err('Method not allowed.', 405);
           return await hAuthPost({ request, env });
@@ -2798,6 +3590,12 @@ export default {
         if (path === '/api/reports' && request.method === 'POST') return await hReportsPost({ request, env });
         if (path === '/api/projects' && request.method === 'POST') return await hProjectsPost({ request, env });
         if ((m = path.match(/^\/api\/projects\/(\d+)$/)) && request.method === 'PATCH') return await hProjectPatch({ request, env, params: { id: m[1] } });
+        if (path === '/api/targets' && request.method === 'POST') return await hTargetsPost({ request, env });
+        if ((m = path.match(/^\/api\/targets\/(\d+)$/)) && request.method === 'PATCH') return await hTargetPatch({ request, env, params: { id: m[1] } });
+        if (path === '/api/captures' && request.method === 'POST') return await hCapturesPost({ request, env });
+        if ((m = path.match(/^\/api\/captures\/(\d+)$/)) && request.method === 'PATCH') return await hCapturePatch({ request, env, params: { id: m[1] } });
+        if (path === '/api/people' && request.method === 'POST') return await hPeoplePost({ request, env });
+        if ((m = path.match(/^\/api\/people\/(\d+)$/)) && request.method === 'PATCH') return await hPersonPatch({ request, env, params: { id: m[1] } });
         if (path === '/api/logout' && request.method === 'POST') return await hLogoutPost({ request, env });
         return err('Not found.', 404);
       } catch (e) {

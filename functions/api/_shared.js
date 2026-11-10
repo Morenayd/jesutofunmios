@@ -189,3 +189,172 @@ export async function ensureProjectsTable(env) {
     );
   }
 }
+
+// Whole-number counts (a target's current/total). Returns the fallback for
+// empty input, undefined for anything that is not a non-negative integer.
+export function validCount(value, fallback = 0) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n > 100000) return undefined;
+  return n;
+}
+
+// Monthly target: the one headline goal shown as the butter banner on
+// Today ("MONTHLY TARGET · NOV 30 / Publish 4 hardware essays / 1 / 4
+// published"). Targets are edited from the Projects view; Today only
+// displays the earliest-due one.
+export const TARGETS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS targets (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  label      TEXT NOT NULL,
+  detail     TEXT NOT NULL DEFAULT '',
+  current    INTEGER NOT NULL DEFAULT 0,
+  total      INTEGER NOT NULL DEFAULT 0,
+  due_date   TEXT,
+  created_by TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)`;
+
+// Her own Daybreak demo target, in her words — seeded once, hers to edit.
+export const TARGET_SEED = [
+  {
+    label: 'Publish 4 hardware essays',
+    detail: 'The Hardware Brief',
+    current: 1,
+    total: 4,
+    due_date: '2026-11-30',
+  },
+];
+
+export async function ensureTargetsTable(env) {
+  if (!env || !env.DB) return;
+  await env.DB.prepare(TARGETS_TABLE_SQL).run();
+  const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM targets').first();
+  if (row && row.n === 0) {
+    const ts = nowISO();
+    await env.DB.batch(
+      TARGET_SEED.map((t) =>
+        env.DB
+          .prepare(
+            'INSERT INTO targets (label, detail, current, total, due_date, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+          )
+          .bind(t.label, t.detail, t.current, t.total, t.due_date, 'Nayden', ts, ts)
+      )
+    );
+  }
+}
+
+// Captures: the Inbox — raw notes, links and half-formed thoughts dropped
+// by anyone, exactly as written. `filed` flips when Nayden has triaged a
+// capture into the board/digest; nothing here is edited or deleted.
+export const CAPTURES_TABLE_SQL = `CREATE TABLE IF NOT EXISTS captures (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  body       TEXT NOT NULL DEFAULT '',
+  author     TEXT NOT NULL DEFAULT '',
+  filed      INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+)`;
+
+export async function ensureCapturesTable(env) {
+  if (!env || !env.DB) return;
+  await env.DB.prepare(CAPTURES_TABLE_SQL).run();
+}
+
+// People: the Follow-ups section — who Jesutofunmi is keeping in touch
+// with, and the next step for each. Seeded from her 9 Nov 2026 shortlist
+// (people-shortlist-2026-11-09.md), in that file's own words.
+export const PEOPLE_TABLE_SQL = `CREATE TABLE IF NOT EXISTS people (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  context    TEXT NOT NULL DEFAULT '',
+  note       TEXT NOT NULL DEFAULT '',
+  next_step  TEXT NOT NULL DEFAULT '',
+  channel    TEXT NOT NULL DEFAULT 'email',
+  created_by TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)`;
+
+export const PEOPLE_SEED = [
+  {
+    name: 'Jahleesa Phelps',
+    context: 'BVCC Executive Director (jahleesa@bvcc.vc); leads the VC cohort programme Jesutofunmi is in and is the point of contact for her Advanced Programs application',
+    note: 'Her 3 Nov email asked Jesutofunmi to reply confirming receipt — the reply was drafted but never sent. The same email promised a first-round interview update by Mon 9 Nov; it has not arrived.',
+    next_step: 'Confirm receipt and politely follow up on the first-round interview timeline.',
+    channel: 'email',
+  },
+  {
+    name: 'Jean Bray',
+    context: 'Burns & McDonnell recruiting (jbray@burnsmcd.com); the recruiting contact for the opportunity she picked up at WE26',
+    note: 'Interview invitation arrived 8 Nov: a pre-recorded video interview due within one week (~15 Nov, 23:23 ET), plus her unofficial transcript is to be emailed to recruiting — that email is drafted and still unsent.',
+    next_step: 'Email the transcript to recruiting; the video interview itself is hers to complete this week.',
+    channel: 'email',
+  },
+  {
+    name: 'Dr Xishuang Dong',
+    context: 'Her PVAMU professor; agreed to write her Second Start scholarship recommendation letter, and named as her advisor on the POPL 2027 form',
+    note: 'The letter was confirmed still outstanding on 10 Oct and the Second Start application stays blocked on it. She named him as advisor on the POPL form on 2 Nov — a natural moment to thank him and nudge the letter.',
+    next_step: 'Thank him for the POPL advisor naming and nudge the Second Start letter.',
+    channel: 'email',
+  },
+  {
+    name: 'Francesca Falliti',
+    context: 'HPE Senior Recruiter on her Product Management Intern process; sent prep tips before the 27 Oct interview',
+    note: 'Her 28 Oct acknowledgement said an update would come by email once there was one. None has arrived in the ~2 weeks since the interview — a short, confident status check is timely.',
+    next_step: 'Send a short, confident status check on the PM Intern process.',
+    channel: 'email',
+  },
+  {
+    name: 'Wendy Lewis',
+    context: 'HPE (Cybersecurity & Digital Risk Management); referred her to the HPE PM Intern role in September and sent well-wishes the night before the interview',
+    note: 'Jesutofunmi thanked her on 27 Oct and promised "I will keep you posted as things progress." Keeping that promise keeps her strongest internal advocate warm.',
+    next_step: 'Send the promised brief update: interview done, awaiting the team\u2019s decision.',
+    channel: 'email',
+  },
+  {
+    name: 'John Salihu',
+    context: 'Cummins referrer; referred her to the Cummins Electronic Systems Summer Internship (job 2437302) and forwarded her resume himself on 24 Oct',
+    note: 'Cummins HR confirmed receipt of her application the same evening, 24 Oct. No thank-you from her appears in sent mail — one is owed to the person who personally carried her resume in.',
+    next_step: 'Send a thank-you plus a short status note.',
+    channel: 'email',
+  },
+  {
+    name: 'Prof. Olga Mironenko',
+    context: 'UIUC ECE professor; invited her to the UIUC ECE prospective graduate students dinner at WE26 and confirmed her spot',
+    note: 'She attended the dinner on 6 Nov; Olga\u2019s last message was pre-dinner logistics. A post-dinner thank-you is owed, and UIUC ECE is a live graduate-school connection worth keeping warm.',
+    next_step: 'Send a post-dinner thank-you.',
+    channel: 'email',
+  },
+  {
+    name: 'Shreyas Doshi',
+    context: 'High Leverage Labs — the PM she worked directly with (2025\u20132026); together they took Product Sense and Product Leaders Club from 5% to 38% WAU',
+    note: 'Her closest professional tie and strongest PM reference point. No personal exchange appears in the last 30 days of mail (only his newsletter), and she is mid PM-interview season.',
+    next_step: 'Send a short update to keep the relationship current.',
+    channel: 'email',
+  },
+  {
+    name: 'Lijun Qian',
+    context: 'Research co-author of the review paper on foundation models for knowledge graphs (HGNet, ULTRA, MERRY)',
+    note: 'A live research collaboration with no recorded contact since she built the presentation from their paper on 7 Oct. Relationship maintenance — lowest urgency on the shortlist.',
+    next_step: 'Send a brief check-in on the collaboration.',
+    channel: 'email',
+  },
+];
+
+export async function ensurePeopleTable(env) {
+  if (!env || !env.DB) return;
+  await env.DB.prepare(PEOPLE_TABLE_SQL).run();
+  const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM people').first();
+  if (row && row.n === 0) {
+    const ts = nowISO();
+    await env.DB.batch(
+      PEOPLE_SEED.map((p) =>
+        env.DB
+          .prepare(
+            'INSERT INTO people (name, context, note, next_step, channel, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+          )
+          .bind(p.name, p.context, p.note, p.next_step, p.channel, 'Nayden', ts, ts)
+      )
+    );
+  }
+}

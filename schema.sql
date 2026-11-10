@@ -53,11 +53,43 @@ CREATE TABLE IF NOT EXISTS projects (
   updated_at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS targets (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  label      TEXT NOT NULL,                       -- e.g. "Publish 4 hardware essays"
+  detail     TEXT NOT NULL DEFAULT '',            -- e.g. "The Hardware Brief"
+  current    INTEGER NOT NULL DEFAULT 0,
+  total      INTEGER NOT NULL DEFAULT 0,
+  due_date   TEXT,                                -- ISO date YYYY-MM-DD or NULL
+  created_by TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS captures (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  body       TEXT NOT NULL DEFAULT '',            -- the raw note, exactly as dropped
+  author     TEXT NOT NULL DEFAULT '',            -- who dropped it (the acting-as name)
+  filed      INTEGER NOT NULL DEFAULT 0,          -- 1 once Nayden has triaged it
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS people (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  context    TEXT NOT NULL DEFAULT '',            -- who they are
+  note       TEXT NOT NULL DEFAULT '',            -- why they are on the list
+  next_step  TEXT NOT NULL DEFAULT '',            -- the next move
+  channel    TEXT NOT NULL DEFAULT 'email',
+  created_by TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS activity (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id    INTEGER,                             -- NULL for digest/deadline events
   actor      TEXT NOT NULL,
-  action     TEXT NOT NULL,                       -- created | status_changed | updated | digest_posted | deadline_added | deadline_updated | report_posted | project_added | project_updated
+  action     TEXT NOT NULL,                       -- created | status_changed | updated | digest_posted | deadline_added | deadline_updated | report_posted | project_added | project_updated | target_added | target_updated | capture_added | capture_filed | capture_unfiled | person_added | person_updated
   note       TEXT DEFAULT '',
   created_at TEXT NOT NULL
 );

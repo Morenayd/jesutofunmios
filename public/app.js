@@ -220,53 +220,9 @@ function dueChip(task) {
 
 /* ================= today ================= */
 
-const ACTION_LABELS = {
-  created: 'created a task',
-  status_changed: 'changed a task status',
-  updated: 'edited a task',
-  digest_posted: 'posted a digest',
-  deadline_added: 'added a deadline',
-  deadline_updated: 'updated a deadline',
-  report_posted: 'posted a daily report',
-  project_added: 'added a project',
-  project_updated: 'updated a project',
-};
-
-/* ---------- week calendar (This week card) ----------
-   One Sunday–Saturday week at a time; weekOffset moves it with the
-   chevrons. Days are real buttons: a click jumps to that date in the
-   Deadlines view, flashing its rows — or landing on the nearest
-   deadline when the day itself has none, so it never feels dead. */
-
-let weekOffset = 0;
-
-function renderWeekStrip() {
-  if (!state) return;
-  const deadlines = state.deadlines || [];
-  const deadlineDates = new Set(deadlines.map((d) => d.date));
-  const sunday = parseDay(todayStr());
-  sunday.setDate(sunday.getDate() - sunday.getDay() + weekOffset * 7);
-  const weekLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-  let weekHtml = '';
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(sunday);
-    d.setDate(sunday.getDate() + i);
-    const iso = isoOf(d);
-    const count = deadlines.filter((x) => x.date === iso).length;
-    const label = `${fmtDate(iso)}${count ? ` — ${count} deadline${count > 1 ? 's' : ''}` : ''}`;
-    weekHtml += `<button type="button" class="week-day${iso === todayStr() ? ' today' : ''}" data-week-date="${iso}" aria-label="${esc(label)}" title="${esc(label)}"><span class="week-letter">${weekLetters[i]}</span><span class="week-num">${d.getDate()}</span>${deadlineDates.has(iso) ? '<span class="week-dot"></span>' : ''}</button>`;
-  }
-  $('#weekStrip').innerHTML = weekHtml;
-
-  const end = new Date(sunday);
-  end.setDate(sunday.getDate() + 6);
-  const startLabel = sunday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const endLabel = sunday.getMonth() === end.getMonth()
-    ? String(end.getDate())
-    : end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  $('#weekRange').textContent = `${startLabel} – ${endLabel}`;
-}
-
+// Jump to a date in the Deadlines view, flashing its rows — or landing
+// on the nearest deadline when the day itself has none. Used by the
+// Today Deadlines card and the Calendar view.
 function gotoDeadlineDate(iso) {
   showView('deadlines');
   const rows = [...document.querySelectorAll('#deadlineList .deadline-row')];
@@ -287,13 +243,8 @@ function gotoDeadlineDate(iso) {
   }
 }
 
-$('#weekStrip').addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-week-date]');
-  if (btn) gotoDeadlineDate(btn.dataset.weekDate);
-});
-$('#weekPrev').addEventListener('click', () => { weekOffset -= 1; renderWeekStrip(); });
-$('#weekNext').addEventListener('click', () => { weekOffset += 1; renderWeekStrip(); });
 $('#deadlinesMore').addEventListener('click', () => showView('deadlines'));
+$('#todayTasksMore').addEventListener('click', () => showView('board'));
 
 // Relative chip for the Today deadlines card, tinted by closeness:
 // rose for overdue/today/2 days out, butter for 3–4, grey beyond.
@@ -309,31 +260,12 @@ function relChip(d) {
 function renderToday() {
   const tasks = state.tasks || [];
   const open = tasks.filter((t) => t.status !== 'done');
-  const waiting = tasks.filter((t) => t.status === 'waiting');
-  const weekAgo = Date.now() - 7 * 86400000;
-  const doneWeek = tasks.filter((t) => t.status === 'done' && new Date(t.updated_at).getTime() >= weekAgo);
-  // Priority order for the attention list: overdue first, then tasks
-  // waiting on Jesutofunmi, then the rest — each group by due ascending.
-  // The first row is therefore the day's top item; there is no separate
-  // focus panel repeating it.
-  const priorityGroup = (t) => (daysUntil(t.due) < 0 ? 0 : t.status === 'waiting' ? 1 : 2);
-  const byPriority = (a, b) =>
-    priorityGroup(a) - priorityGroup(b) || a.due.localeCompare(b.due);
-  const dueNow = open
-    .filter((t) => t.due && daysUntil(t.due) <= 3)
-    .sort(byPriority);
 
   // Eyebrow: the real date (styled uppercase by CSS).
   const now = new Date();
   const weekday = now.toLocaleDateString('en-US', { weekday: 'short' });
   const monthName = now.toLocaleDateString('en-US', { month: 'short' });
   $('#todayEyebrow').textContent = `${weekday}, ${monthName} ${now.getDate()}`;
-
-  renderWeekStrip();
-
-  // One quiet line of counts — these numbers live here and nowhere else.
-  $('#statsRow').textContent =
-    `${open.length} open · ${waiting.length} waiting on you · ${doneWeek.length} done this week`;
 
   // The Brief: the latest digest, white on deep green.
   const digest = state.latestDigest;
@@ -347,19 +279,38 @@ function renderToday() {
     $('#todayDigestBody').innerHTML = '<p class="muted">The first brief will appear here.</p>';
   }
 
-  // What deserves your attention: tasks-style rows. Clicking opens the editor.
-  $('#attentionCount').textContent = dueNow.length ? String(dueNow.length) : '';
-  $('#dueNowList').innerHTML = dueNow.length
-    ? dueNow.map((t) => `
+  // Tasks card: open tasks in priority order — overdue first, then tasks
+  // waiting on Jesutofunmi, then the rest, each group by due date (no due
+  // date last). Six rows at most; the rest sit behind "View all". The
+  // circle does not complete anything (Done needs evidence) — the whole
+  // row, circle included, opens the task editor.
+  const priorityGroup = (t) => (t.due && daysUntil(t.due) < 0 ? 0 : t.status === 'waiting' ? 1 : 2);
+  const byPriority = (a, b) =>
+    priorityGroup(a) - priorityGroup(b) ||
+    (a.due || '9999-12-31').localeCompare(b.due || '9999-12-31') ||
+    a.id - b.id;
+  const shownTasks = [...open].sort(byPriority).slice(0, 6);
+  $('#todayTasksCount').textContent = open.length ? String(open.length) : '';
+  $('#todayTasks').innerHTML = shownTasks.length
+    ? shownTasks.map((t) => {
+        const meta = [esc(t.owner)];
+        if (t.due) {
+          const days = daysUntil(t.due);
+          meta.push(days < 0 ? 'Overdue' : days === 0 ? 'Due today' : `Due ${fmtDate(t.due)}`);
+        }
+        if (priorityGroup(t) < 2) meta.push('<span class="priority-tag">Priority</span>');
+        return `
         <div class="attention-row" data-open-task="${t.id}" role="button" tabindex="0">
           <span class="att-circle" aria-hidden="true"></span>
           <div class="grow">
             <div class="att-title">${esc(t.title)}</div>
-            <div class="att-meta"><span class="owner-dot owner-dot-${esc(t.owner)}"></span><span>${esc(t.owner)}${t.status === 'waiting' ? ' · waiting on you' : ''}</span></div>
+            <div class="att-meta"><span class="owner-dot owner-dot-${esc(t.owner)}"></span><span>${meta.join(' · ')}</span></div>
           </div>
           ${dueChip(t)}
-        </div>`).join('')
-    : '<p class="muted">Nothing overdue, and nothing due in the next 72 hours.</p>';
+        </div>`;
+      }).join('')
+    : '<p class="muted">Nothing open right now.</p>';
+  $('#todayTasksFoot').classList.toggle('hidden', open.length <= 6);
 
   // Deadlines card: overdue and today's first, then the next ones out to
   // 14 days, five at most. Clicking a row jumps to it in Deadlines.
@@ -384,32 +335,264 @@ function renderToday() {
       }).join('')
     : '<p class="muted">No deadlines in the next 14 days.</p>';
 
-  // Under the week strip: whatever is dated today — deadlines due today
-  // first, then open tasks due today — as tinted blocks.
-  const t = todayStr();
-  const dlToday = (state.deadlines || []).filter((d) => d.date === t);
-  const tasksToday = open.filter((x) => x.due === t);
-  const tintCycle = ['tint-sage', 'tint-butter', 'tint-rose'];
-  const blocks = [
-    ...dlToday.map((d) => ({ title: d.title, sub: `Deadline · ${d.owner}` })),
-    ...tasksToday.map((x) => ({ title: x.title, sub: `Task · ${x.owner}` })),
-  ];
-  $('#todayItems').innerHTML = blocks.length
-    ? blocks.map((b, i) => `
-        <div class="today-item ${tintCycle[i % tintCycle.length]}">
-          <div class="ti-title">${esc(b.title)}</div>
-          <div class="ti-sub">${esc(b.sub)}</div>
-        </div>`).join('')
-    : '<p class="muted today-items-empty">Nothing dated today.</p>';
-
-  $('#activityList').innerHTML = (state.activity || []).length
-    ? state.activity.map((a) => `
-        <div class="activity-item">
-          <div class="grow"><span class="actor">${esc(a.actor)}</span> ${esc(ACTION_LABELS[a.action] || a.action)}${a.note ? ` — ${esc(a.note)}` : ''}</div>
-          <span class="muted">${esc(fmtDateTime(a.created_at))}</span>
-        </div>`).join('')
-    : '<p class="muted">No activity yet.</p>';
+  renderSchedule();
 }
+
+/* ---------- schedule card ----------
+   Today's dated items: deadlines due today and open tasks due today, as
+   tinted blocks. The time gutter is honest: a time shows only when the
+   item itself carries one in its title or notes (e.g. a session whose
+   notes hold "6:00–8:00 PM CT") — never an invented one. */
+
+function extractTime(text) {
+  if (!text) return null;
+  const s = String(text);
+  const toMinutes = (h, min, mer) =>
+    mer ? ((h % 12) + (mer === 'PM' ? 12 : 0)) * 60 + min : h * 60 + min;
+  const label = (h, min, mer) =>
+    mer ? `${h}:${String(min).padStart(2, '0')} ${mer}` : `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+  // Range first: a trailing AM/PM on the range end applies to the start.
+  let m = s.match(/(\d{1,2}):(\d{2})\s*(?:–|—|-|\bto\b)\s*(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (m) {
+    const mer = m[5] ? m[5].toUpperCase() : null;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    return { label: label(h, min, mer), minutes: toMinutes(h, min, mer) };
+  }
+  m = s.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!m) return null;
+  const mer = m[3] ? m[3].toUpperCase() : null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  return { label: label(h, min, mer), minutes: toMinutes(h, min, mer) };
+}
+
+// Remove time expressions (and timezone tags) from a detail line so what
+// remains can sit beside the time in the gutter without repeating it.
+function stripTimes(text) {
+  return String(text || '')
+    .replace(/\d{1,2}:\d{2}\s*(?:–|—|-|\bto\b)\s*\d{1,2}:\d{2}\s*(AM|PM)?/gi, '')
+    .replace(/\d{1,2}:\d{2}\s*(AM|PM)?/gi, '')
+    .replace(/\b(CT|ET|PT|MT|CST|EST|PST|MST|CDT|EDT|PDT|MDT)\b/g, '')
+    .replace(/^[~\s,;·—-]+|[~\s,;·—-]+$/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function renderSchedule() {
+  const t = todayStr();
+  const items = [];
+  (state.deadlines || []).filter((d) => d.date === t).forEach((d) => {
+    const time = extractTime(`${d.title} ${d.notes || ''}`);
+    const rest = stripTimes(d.notes || '');
+    items.push({ title: d.title, sub: rest || `Deadline · ${d.owner}`, time });
+  });
+  (state.tasks || []).filter((x) => x.status !== 'done' && x.due === t).forEach((x) => {
+    const time = extractTime(`${x.title} ${x.details || ''}`);
+    items.push({
+      title: x.title,
+      sub: `Task · ${x.owner}${x.status === 'waiting' ? ' · waiting on you' : ''}`,
+      time,
+    });
+  });
+  items.sort((a, b) => {
+    if (a.time && b.time) return a.time.minutes - b.time.minutes;
+    if (a.time) return -1;
+    if (b.time) return 1;
+    return 0;
+  });
+  const tints = ['tint-sage', 'tint-butter', 'tint-rose'];
+  $('#scheduleList').innerHTML = items.length
+    ? items.map((it, i) => `
+        <div class="sched-row">
+          <span class="sched-time">${it.time ? esc(it.time.label) : ''}</span>
+          <div class="sched-block ${tints[i % tints.length]}">
+            <div class="ti-title">${esc(it.title)}</div>
+            <div class="ti-sub">${esc(it.sub)}</div>
+          </div>
+        </div>`).join('')
+    : '<p class="muted">Nothing scheduled today.</p>';
+}
+
+/* ================= monthly target ================= */
+
+function activeTarget() {
+  const targets = (state && state.targets) || [];
+  return targets.length ? targets[0] : null; // state orders earliest due first
+}
+
+function renderTarget() {
+  const target = activeTarget();
+  const banner = $('#targetBanner');
+  if (target) {
+    banner.classList.remove('hidden');
+    const dueLabel = target.due_date
+      ? parseDay(target.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      : 'no date set';
+    $('#targetEyebrow').textContent = `Monthly target · ${dueLabel}`;
+    $('#targetLabel').textContent = target.label;
+    $('#targetProgress').textContent = `${target.current} / ${target.total} published`;
+  } else {
+    banner.classList.add('hidden');
+  }
+  $('#targetSummary').innerHTML = target
+    ? `<div class="target-summary-label">${esc(target.label)}</div>
+       ${target.detail ? `<div class="muted">${esc(target.detail)}</div>` : ''}
+       <div class="target-summary-progress">${target.current} / ${target.total} published${target.due_date ? ` · due ${fmtDate(target.due_date)}` : ''}</div>`
+    : '<p class="muted">No monthly target set.</p>';
+  $('#editTargetBtn').textContent = target ? 'Edit' : 'Set target';
+}
+
+$('#targetBanner').addEventListener('click', () => showView('projects'));
+
+function openTargetEditor() {
+  const target = activeTarget();
+  $('#targetFormTitle').textContent = target ? 'Edit monthly target' : 'Set monthly target';
+  $('#targetId').value = target ? target.id : '';
+  $('#mtLabel').value = target ? target.label : '';
+  $('#mtDetail').value = target ? target.detail || '' : '';
+  $('#mtCurrent').value = target ? target.current : 0;
+  $('#mtTotal').value = target ? target.total : 0;
+  $('#mtDue').value = target && target.due_date ? target.due_date : '';
+  $('#mtError').textContent = '';
+  openModal('targetModal');
+}
+$('#editTargetBtn').addEventListener('click', openTargetEditor);
+
+$('#targetForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('#mtError').textContent = '';
+  const id = $('#targetId').value;
+  const payload = {
+    label: $('#mtLabel').value.trim(),
+    detail: $('#mtDetail').value,
+    current: Number($('#mtCurrent').value || 0),
+    total: Number($('#mtTotal').value || 0),
+    due_date: $('#mtDue').value || null,
+    actor,
+  };
+  try {
+    if (id) await api(`/api/targets/${id}`, { method: 'PATCH', body: payload });
+    else await api('/api/targets', { method: 'POST', body: payload });
+    closeModal('targetModal');
+    await loadState();
+  } catch (err) {
+    $('#mtError').textContent = err.message;
+  }
+});
+
+/* ================= inbox ================= */
+
+function renderInbox() {
+  const captures = (state && state.captures) || [];
+  const unfiled = captures.filter((c) => !Number(c.filed));
+  const filed = captures.filter((c) => Number(c.filed));
+  const badge = $('#inboxBadge');
+  badge.textContent = String(unfiled.length);
+  badge.classList.toggle('hidden', unfiled.length === 0);
+
+  const card = (c, isFiled) => `
+    <div class="card capture-card${isFiled ? ' filed' : ''}">
+      <div class="capture-body">${esc(c.body)}</div>
+      <div class="capture-meta">
+        <span class="muted">${esc(c.author)} · ${esc(fmtDateTime(c.created_at))}</span>
+        <button type="button" class="btn btn-ghost btn-small" data-file-capture="${c.id}" data-filed="${isFiled ? 1 : 0}">${isFiled ? 'Move back to inbox' : 'Mark filed'}</button>
+      </div>
+    </div>`;
+  $('#captureList').innerHTML =
+    (unfiled.length
+      ? unfiled.map((c) => card(c, false)).join('')
+      : '<p class="muted">Nothing waiting. Drop the next thought above.</p>') +
+    (filed.length ? '<h3 class="filed-head">Filed</h3>' + filed.map((c) => card(c, true)).join('') : '');
+}
+
+$('#captureForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('#captureError').textContent = '';
+  try {
+    await api('/api/captures', { method: 'POST', body: { body: $('#captureBody').value, actor } });
+    $('#captureBody').value = '';
+    await loadState();
+  } catch (err) {
+    $('#captureError').textContent = err.message;
+  }
+});
+
+$('#captureList').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-file-capture]');
+  if (!btn) return;
+  try {
+    await api(`/api/captures/${btn.dataset.fileCapture}`, {
+      method: 'PATCH',
+      body: { filed: btn.dataset.filed === '1' ? 0 : 1, actor },
+    });
+    await loadState();
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+/* ================= follow-ups ================= */
+
+const CHANNEL_LABELS = { email: 'Email', whatsapp: 'WhatsApp', phone: 'Phone', linkedin: 'LinkedIn', other: 'Other' };
+
+function renderFollowups() {
+  const people = (state && state.people) || [];
+  $('#peopleList').innerHTML = people.length
+    ? people.map((p) => `
+        <div class="person-row" data-person-id="${p.id}">
+          <div class="grow">
+            <div class="person-name">${esc(p.name)}</div>
+            ${p.context ? `<div class="person-context">${esc(p.context)}</div>` : ''}
+            ${p.note ? `<div class="person-note">${esc(p.note)}</div>` : ''}
+            ${p.next_step ? `<div class="person-next"><span class="person-next-label">Next step</span> ${esc(p.next_step)}</div>` : ''}
+          </div>
+          <span class="chip channel-chip">${esc(CHANNEL_LABELS[p.channel] || 'Email')}</span>
+        </div>`).join('')
+    : '<p class="muted">No one on the list yet.</p>';
+  document.querySelectorAll('[data-person-id]').forEach((row) => {
+    row.addEventListener('click', () => {
+      const p = people.find((x) => x.id === Number(row.dataset.personId));
+      if (p) openPersonEditor(p);
+    });
+  });
+}
+
+function openPersonEditor(p) {
+  $('#personFormTitle').textContent = p ? 'Edit person' : 'Add person';
+  $('#personId').value = p ? p.id : '';
+  $('#personName').value = p ? p.name : '';
+  $('#personContext').value = p ? p.context || '' : '';
+  $('#personNote').value = p ? p.note || '' : '';
+  $('#personNextStep').value = p ? p.next_step || '' : '';
+  const channel = p && p.channel ? p.channel : 'email';
+  $('#personChannel').value = [...$('#personChannel').options].some((o) => o.value === channel) ? channel : 'other';
+  $('#personError').textContent = '';
+  openModal('personModal');
+}
+$('#newPersonBtn').addEventListener('click', () => openPersonEditor(null));
+
+$('#personForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('#personError').textContent = '';
+  const id = $('#personId').value;
+  const payload = {
+    name: $('#personName').value.trim(),
+    context: $('#personContext').value,
+    note: $('#personNote').value,
+    next_step: $('#personNextStep').value,
+    channel: $('#personChannel').value,
+    actor,
+  };
+  try {
+    if (id) await api(`/api/people/${id}`, { method: 'PATCH', body: payload });
+    else await api('/api/people', { method: 'POST', body: payload });
+    closeModal('personModal');
+    await loadState();
+  } catch (err) {
+    $('#personError').textContent = err.message;
+  }
+});
 
 // Today deadlines-card rows jump to the date in the Deadlines view.
 $('#todayDeadlines').addEventListener('click', (e) => {
@@ -892,13 +1075,45 @@ $('#reportForm').addEventListener('submit', async (e) => {
 
 function renderAll() {
   renderToday();
+  renderTarget();
+  renderInbox();
   renderBoard();
   renderCalendar();
   renderDeadlines();
   renderProjects();
   renderReports();
+  renderFollowups();
   refreshReportForm();
 }
+
+/* Sign-in is currently off by choice: the app shell is the default
+   landing page and /api/state answers openly. The gate may only appear
+   on a genuine 401 from the API (which api() handles itself) — never
+   because a state load hiccuped or a render threw. On load failure we
+   retry once, then show the shell with an inline error note. */
+
+function setLoadError(show) {
+  $('#loadError').classList.toggle('hidden', !show);
+}
+
+async function loadStateRetry() {
+  try {
+    await loadState();
+    setLoadError(false);
+    return;
+  } catch (err) {
+    if (err && err.message === 'Not signed in.') return; // genuine 401: gate already shown by api()
+  }
+  await new Promise((r) => setTimeout(r, 900));
+  try {
+    await loadState();
+    setLoadError(false);
+  } catch (err) {
+    if (err && err.message === 'Not signed in.') return;
+    setLoadError(true);
+  }
+}
+$('#loadRetryBtn').addEventListener('click', loadStateRetry);
 
 (function init() {
   const sel = $('#actorSelect');
@@ -907,7 +1122,6 @@ function renderAll() {
   syncActorCard();
   $('#reportDate').value = todayStr();
   $('#reportAuthor').value = actor;
-  loadState()
-    .then(() => showApp())
-    .catch(() => showGate());
+  showApp();
+  loadStateRetry();
 })();

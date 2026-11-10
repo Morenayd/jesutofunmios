@@ -219,5 +219,89 @@
       "status": "active",
       "created_by": "Nayden"
     }
+  ],
+  "targets": [
+    {
+      "label": "Publish 4 hardware essays",
+      "detail": "The Hardware Brief",
+      "current": 1,
+      "total": 4,
+      "due_date": "2026-11-30",
+      "created_by": "Nayden"
+    }
+  ],
+  "people": [
+    {
+      "name": "Jahleesa Phelps",
+      "context": "BVCC Executive Director (jahleesa@bvcc.vc); leads the VC cohort programme Jesutofunmi is in and is the point of contact for her Advanced Programs application",
+      "note": "Her 3 Nov email asked Jesutofunmi to reply confirming receipt — the reply was drafted but never sent. The same email promised a first-round interview update by Mon 9 Nov; it has not arrived.",
+      "next_step": "Confirm receipt and politely follow up on the first-round interview timeline.",
+      "channel": "email",
+      "created_by": "Nayden"
+    },
+    {
+      "name": "Jean Bray",
+      "context": "Burns & McDonnell recruiting (jbray@burnsmcd.com); the recruiting contact for the opportunity she picked up at WE26",
+      "note": "Interview invitation arrived 8 Nov: a pre-recorded video interview due within one week (~15 Nov, 23:23 ET), plus her unofficial transcript is to be emailed to recruiting — that email is drafted and still unsent.",
+      "next_step": "Email the transcript to recruiting; the video interview itself is hers to complete this week.",
+      "channel": "email",
+      "created_by": "Nayden"
+    },
+    {
+      "name": "Dr Xishuang Dong",
+      "context": "Her PVAMU professor; agreed to write her Second Start scholarship recommendation letter, and named as her advisor on the POPL 2027 form",
+      "note": "The letter was confirmed still outstanding on 10 Oct and the Second Start application stays blocked on it. She named him as advisor on the POPL form on 2 Nov — a natural moment to thank him and nudge the letter.",
+      "next_step": "Thank him for the POPL advisor naming and nudge the Second Start letter.",
+      "channel": "email",
+      "created_by": "Nayden"
+    },
+    {
+      "name": "Francesca Falliti",
+      "context": "HPE Senior Recruiter on her Product Management Intern process; sent prep tips before the 27 Oct interview",
+      "note": "Her 28 Oct acknowledgement said an update would come by email once there was one. None has arrived in the ~2 weeks since the interview — a short, confident status check is timely.",
+      "next_step": "Send a short, confident status check on the PM Intern process.",
+      "channel": "email",
+      "created_by": "Nayden"
+    },
+    {
+      "name": "Wendy Lewis",
+      "context": "HPE (Cybersecurity & Digital Risk Management); referred her to the HPE PM Intern role in September and sent well-wishes the night before the interview",
+      "note": "Jesutofunmi thanked her on 27 Oct and promised \"I will keep you posted as things progress.\" Keeping that promise keeps her strongest internal advocate warm.",
+      "next_step": "Send the promised brief update: interview done, awaiting the team's decision.",
+      "channel": "email",
+      "created_by": "Nayden"
+    },
+    {
+      "name": "John Salihu",
+      "context": "Cummins referrer; referred her to the Cummins Electronic Systems Summer Internship (job 2437302) and forwarded her resume himself on 24 Oct",
+      "note": "Cummins HR confirmed receipt of her application the same evening, 24 Oct. No thank-you from her appears in sent mail — one is owed to the person who personally carried her resume in.",
+      "next_step": "Send a thank-you plus a short status note.",
+      "channel": "email",
+      "created_by": "Nayden"
+    },
+    {
+      "name": "Prof. Olga Mironenko",
+      "context": "UIUC ECE professor; invited her to the UIUC ECE prospective graduate students dinner at WE26 and confirmed her spot",
+      "note": "She attended the dinner on 6 Nov; Olga's last message was pre-dinner logistics. A post-dinner thank-you is owed, and UIUC ECE is a live graduate-school connection worth keeping warm.",
+      "next_step": "Send a post-dinner thank-you.",
+      "channel": "email",
+      "created_by": "Nayden"
+    },
+    {
+      "name": "Shreyas Doshi",
+      "context": "High Leverage Labs — the PM she worked directly with (2025–2026); together they took Product Sense and Product Leaders Club from 5% to 38% WAU",
+      "note": "Her closest professional tie and strongest PM reference point. No personal exchange appears in the last 30 days of mail (only his newsletter), and she is mid PM-interview season.",
+      "next_step": "Send a short update to keep the relationship current.",
+      "channel": "email",
+      "created_by": "Nayden"
+    },
+    {
+      "name": "Lijun Qian",
+      "context": "Research co-author of the review paper on foundation models for knowledge graphs (HGNet, ULTRA, MERRY)",
+      "note": "A live research collaboration with no recorded contact since she built the presentation from their paper on 7 Oct. Relationship maintenance — lowest urgency on the shortlist.",
+      "next_step": "Send a brief check-in on the collaboration.",
+      "channel": "email",
+      "created_by": "Nayden"
+    }
   ]
 }

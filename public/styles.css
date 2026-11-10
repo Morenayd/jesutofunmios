@@ -271,8 +271,6 @@ main {
 }
 .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.55rem; }
 .card-head h2 { font-size: 1.05rem; font-weight: 700; }
-.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
-.section-head h2 { font-size: 1.05rem; font-weight: 700; }
 .quiet-link {
   background: none;
   border: none;
@@ -298,8 +296,20 @@ main {
 @media (max-width: 1080px) {
   .today-grid { grid-template-columns: 1fr; }
 }
-.counts-line { margin: 0.2rem 0.3rem 0; color: var(--muted); font-size: 0.86rem; }
-
+/* ---------- load error note ---------- */
+.load-error {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  background: var(--rose-bg);
+  color: var(--red);
+  border: 1px solid #e5c4b8;
+  border-radius: 12px;
+  padding: 0.7rem 1rem;
+  margin-bottom: 1.1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
 /* ---------- brief panel (deep green) ---------- */
 .brief-panel {
   background: var(--panel-green);
@@ -353,20 +363,53 @@ main {
 .owner-dot-Instinct { background: #8a9078; }
 .attention-row .chip { margin-top: 2px; }
 
-/* ---------- activity ---------- */
-.activity-block { margin-top: 1.6rem; }
-.activity-item {
+/* ---------- monthly target banner ---------- */
+.target-banner {
   display: flex;
-  gap: 0.6rem;
-  align-items: flex-start;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--line-soft);
-  color: var(--ink-soft);
-  font-size: 0.85rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  text-align: left;
+  background: var(--butter-bg);
+  border: 1px solid #eadfae;
+  border-radius: 16px;
+  padding: 1.05rem 1.4rem;
+  margin-bottom: 1.1rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: box-shadow 0.15s ease;
 }
-.activity-item:last-child { border-bottom: none; }
-.activity-item .actor { font-weight: 600; color: var(--ink); }
+.target-banner:hover { box-shadow: var(--shadow-lift); }
+.target-banner:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.target-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.target-eyebrow {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--caramel);
+}
+.target-label { font-size: 1.05rem; font-weight: 700; color: var(--ink); }
+.target-progress { color: var(--ink-soft); font-size: 0.95rem; white-space: nowrap; }
 
+/* ---------- tasks card (today) ---------- */
+.tasks-count { color: var(--muted); font-weight: 600; font-size: 0.95rem; margin-left: 0.3rem; }
+.tasks-foot { padding: 0.7rem 0 0.3rem; border-top: 1px solid var(--line-soft); margin-top: 0.2rem; }
+.priority-tag { color: var(--caramel); font-weight: 600; }
+
+/* ---------- sidebar badge ---------- */
+.tab-badge {
+  margin-left: auto;
+  background: var(--panel);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.28rem 0.5rem;
+}
+.tab.active .tab-badge { background: rgba(255, 255, 255, 0.22); color: #fff; }
 /* ---------- deadlines card (today rail) ---------- */
 .deadlines-card { padding-bottom: 0.65rem; }
 .dl-row {
@@ -392,72 +435,69 @@ main {
 .dl-title { font-weight: 600; font-size: 0.93rem; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 0.15s ease; }
 .dl-context { color: var(--muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* ---------- week strip (this week card) ---------- */
-.week-nav { display: flex; align-items: center; gap: 0.15rem; }
-.week { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.3rem; }
-.week-nav-btn {
-  flex: 0 0 auto;
-  border: none;
-  background: none;
-  padding: 0.35rem 0.4rem;
-  border-radius: 8px;
+/* ---------- schedule card (today rail) ---------- */
+.sched-row { display: flex; gap: 0.85rem; align-items: stretch; margin-top: 0.55rem; }
+.sched-row:first-child { margin-top: 0.2rem; }
+.sched-time {
+  flex: 0 0 46px;
+  padding-top: 0.62rem;
   color: var(--muted);
-  font-family: inherit;
-  font-size: 1.3rem;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  font-size: 0.83rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
-.week-nav-btn:hover { background: var(--sage-soft); color: var(--green); }
-.week-nav-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
-.week-day {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.1rem;
-  padding: 0.55rem 0 0.95rem;
-  border: none;
-  background: none;
-  font: inherit;
-  border-radius: 10px;
-  color: var(--ink-soft);
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-.week-day:hover { background: var(--sage-soft); }
-.week-day:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
-.week-letter { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em; color: var(--muted); }
-.week-num { font-size: 1rem; font-weight: 700; line-height: 1.15; color: var(--ink); }
-.week-day.today { background: var(--green); }
-.week-day.today:hover { background: var(--deep); }
-.week-day.today .week-letter { color: rgba(255, 255, 255, 0.72); }
-.week-day.today .week-num { color: #fff; }
-.week-dot {
-  position: absolute;
-  bottom: 0.42rem;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--caramel);
-}
-.week-day.today .week-dot { background: var(--butter); }
-
-/* today's dated items, under the week strip */
-.today-item {
-  margin-top: 0.55rem;
+.sched-block {
+  flex: 1;
+  min-width: 0;
   padding: 0.6rem 0.8rem;
   border-left: 3px solid var(--green);
   border-radius: 10px;
   background: var(--sage-soft);
 }
-.today-item.tint-butter { background: var(--butter-bg); border-left-color: #c39a1d; }
-.today-item.tint-rose { background: var(--rose-bg); border-left-color: var(--red); }
+.sched-block.tint-butter { background: var(--butter-bg); border-left-color: #c39a1d; }
+.sched-block.tint-rose { background: var(--rose-bg); border-left-color: var(--red); }
 .ti-title { font-weight: 600; font-size: 0.9rem; line-height: 1.3; }
 .ti-sub { color: var(--muted); font-size: 0.78rem; margin-top: 0.1rem; }
-.today-items-empty { margin: 0.6rem 0 0.2rem; }
+
+/* ---------- inbox (captures) ---------- */
+.capture-card { margin-bottom: 0.7rem; }
+.capture-body { white-space: pre-wrap; font-size: 0.94rem; word-break: break-word; }
+.capture-meta { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; margin-top: 0.6rem; }
+.capture-card.filed { opacity: 0.55; }
+.filed-head { margin: 1.2rem 0 0.6rem; font-size: 0.95rem; }
+
+/* ---------- follow-ups (people) ---------- */
+.person-row {
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-start;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1rem 1.2rem;
+  margin-bottom: 0.7rem;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease;
+}
+.person-row:hover { box-shadow: var(--shadow-lift); }
+.person-name { font-weight: 700; font-size: 1rem; }
+.person-context { color: var(--ink-soft); font-size: 0.9rem; margin-top: 0.1rem; }
+.person-note { color: var(--muted); font-size: 0.88rem; margin-top: 0.25rem; }
+.person-next { color: var(--ink-soft); font-size: 0.9rem; margin-top: 0.35rem; }
+.person-next-label {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-right: 0.35rem;
+}
+.channel-chip { background: var(--sage-soft); color: var(--ink-soft); flex: 0 0 auto; }
+
+/* ---------- monthly target (projects view) ---------- */
+.target-summary-label { font-weight: 700; font-size: 1.02rem; }
+.target-summary-progress { margin-top: 0.3rem; color: var(--ink-soft); }
 
 /* ---------- chips ---------- */
 .chip {

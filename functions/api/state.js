@@ -1,12 +1,23 @@
 // GET /api/state — everything the SPA needs in one call:
 // open tasks + latest 50 done, latest digest in full, digest index,
 // deadlines sorted by date, latest 30 activity rows, every daily
-// report from the last 7 days, and all projects.
-import { ensureProjectsTable, ensureReportsTable, json } from './_shared.js';
+// report from the last 7 days, all projects, all targets, the latest
+// 50 captures, and all people.
+import {
+  ensureCapturesTable,
+  ensurePeopleTable,
+  ensureProjectsTable,
+  ensureReportsTable,
+  ensureTargetsTable,
+  json,
+} from './_shared.js';
 
 export async function onRequestGet({ env }) {
   await ensureReportsTable(env);
   await ensureProjectsTable(env);
+  await ensureTargetsTable(env);
+  await ensureCapturesTable(env);
+  await ensurePeopleTable(env);
 
   const open = await env.DB.prepare(
     `SELECT * FROM tasks WHERE status != 'done'
@@ -50,6 +61,22 @@ export async function onRequestGet({ env }) {
      ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, id ASC`
   ).all();
 
+  // Targets: earliest due first (undated last) — the first row is the one
+  // the Today banner shows.
+  const targets = await env.DB.prepare(
+    `SELECT * FROM targets
+     ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date ASC, id ASC`
+  ).all();
+
+  // Captures: newest first, capped at 50 — enough for the badge count and
+  // the Inbox list without shipping the whole archive.
+  const captures = await env.DB.prepare(
+    'SELECT * FROM captures ORDER BY id DESC LIMIT 50'
+  ).all();
+
+  // People: shortlist order (seeded order), oldest first.
+  const people = await env.DB.prepare('SELECT * FROM people ORDER BY id ASC').all();
+
   return json({
     tasks: [...(open.results || []), ...(done.results || [])],
     latestDigest: latestDigest || null,
@@ -58,5 +85,8 @@ export async function onRequestGet({ env }) {
     activity: activity.results || [],
     reports: reports.results || [],
     projects: projects.results || [],
+    targets: targets.results || [],
+    captures: captures.results || [],
+    people: people.results || [],
   });
 }
