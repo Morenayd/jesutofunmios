@@ -119,3 +119,73 @@ export async function ensureReportsTable(env) {
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(date)'),
   ]);
 }
+
+// Projects: the standing areas of work (the Substack, graduate school, the
+// internship campaign...). A project's status is a simple lifecycle —
+// active | paused | done — not a task status. Projects are their own
+// section: tasks and deadlines are deliberately NOT filed under them.
+export const PROJECT_STATUSES = ['active', 'paused', 'done'];
+
+export function validProjectStatus(value, fallback = 'active') {
+  if (value === undefined || value === null || value === '') return fallback;
+  return PROJECT_STATUSES.includes(value) ? value : undefined; // undefined = invalid
+}
+
+export const PROJECTS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS projects (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'active',
+  created_by  TEXT DEFAULT '',
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+)`;
+
+// The five standing projects. They are also in seed.json/seed.sql for fresh
+// installs; the seed-if-empty below covers databases that already exist
+// (production), so they gain the rows on the first request after deploy
+// with no manual step.
+export const PROJECT_SEED = [
+  {
+    name: 'The Hardware Brief',
+    description: 'Substack essays on companies building intelligent hardware, at the edge and at scale.',
+  },
+  {
+    name: 'Graduate school',
+    description: 'M.S. Electrical Engineering at Prairie View A&M and CREDIT Lab research, including the NAACL SRW knowledge-graph paper.',
+  },
+  {
+    name: 'Summer 2027 internship campaign',
+    description: 'Internship and new-grad applications across PM, ML/AI, software and hardware roles.',
+  },
+  {
+    name: 'BVCC capstone',
+    description: 'SparkCharge investment memo for the BVCC Premium Certificate, due Nov 30, 2026.',
+  },
+  {
+    name: 'JesutofunmiOS',
+    description: 'This platform: her life-management board, maintained by Nayden with Claude, ChatGPT and Instinct as contributors.',
+  },
+];
+
+// Self-migration, same pattern as reports: create the projects table when
+// missing, and seed the standing projects when the table is empty. There
+// is no delete for projects, so an empty table only ever means "not
+// seeded yet" — the seed can never resurrect something she removed.
+export async function ensureProjectsTable(env) {
+  if (!env || !env.DB) return;
+  await env.DB.prepare(PROJECTS_TABLE_SQL).run();
+  const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM projects').first();
+  if (row && row.n === 0) {
+    const ts = nowISO();
+    await env.DB.batch(
+      PROJECT_SEED.map((p) =>
+        env.DB
+          .prepare(
+            'INSERT INTO projects (name, description, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+          )
+          .bind(p.name, p.description, 'active', 'Nayden', ts, ts)
+      )
+    );
+  }
+}

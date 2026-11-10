@@ -123,6 +123,76 @@ async function ensureReportsTable(env) {
   ]);
 }
 
+// Projects: the standing areas of work (the Substack, graduate school, the
+// internship campaign...). A project's status is a simple lifecycle —
+// active | paused | done — not a task status. Projects are their own
+// section: tasks and deadlines are deliberately NOT filed under them.
+const PROJECT_STATUSES = ['active', 'paused', 'done'];
+
+function validProjectStatus(value, fallback = 'active') {
+  if (value === undefined || value === null || value === '') return fallback;
+  return PROJECT_STATUSES.includes(value) ? value : undefined; // undefined = invalid
+}
+
+const PROJECTS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS projects (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'active',
+  created_by  TEXT DEFAULT '',
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+)`;
+
+// The five standing projects. They are also in seed.json/seed.sql for fresh
+// installs; the seed-if-empty below covers databases that already exist
+// (production), so they gain the rows on the first request after deploy
+// with no manual step.
+const PROJECT_SEED = [
+  {
+    name: 'The Hardware Brief',
+    description: 'Substack essays on companies building intelligent hardware, at the edge and at scale.',
+  },
+  {
+    name: 'Graduate school',
+    description: 'M.S. Electrical Engineering at Prairie View A&M and CREDIT Lab research, including the NAACL SRW knowledge-graph paper.',
+  },
+  {
+    name: 'Summer 2027 internship campaign',
+    description: 'Internship and new-grad applications across PM, ML/AI, software and hardware roles.',
+  },
+  {
+    name: 'BVCC capstone',
+    description: 'SparkCharge investment memo for the BVCC Premium Certificate, due Nov 30, 2026.',
+  },
+  {
+    name: 'JesutofunmiOS',
+    description: 'This platform: her life-management board, maintained by Nayden with Claude, ChatGPT and Instinct as contributors.',
+  },
+];
+
+// Self-migration, same pattern as reports: create the projects table when
+// missing, and seed the standing projects when the table is empty. There
+// is no delete for projects, so an empty table only ever means "not
+// seeded yet" — the seed can never resurrect something she removed.
+async function ensureProjectsTable(env) {
+  if (!env || !env.DB) return;
+  await env.DB.prepare(PROJECTS_TABLE_SQL).run();
+  const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM projects').first();
+  if (row && row.n === 0) {
+    const ts = nowISO();
+    await env.DB.batch(
+      PROJECT_SEED.map((p) =>
+        env.DB
+          .prepare(
+            'INSERT INTO projects (name, description, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+          )
+          .bind(p.name, p.description, 'active', 'Nayden', ts, ts)
+      )
+    );
+  }
+}
+
 // ---- ./functions/api/auth.js ----
 // POST /api/auth — body { passcode, actor }
 // On a passcode match, sets an HttpOnly session cookie whose value is a
@@ -172,11 +242,12 @@ async function hLogoutPost() {
 // ---- ./functions/api/state.js ----
 // GET /api/state — everything the SPA needs in one call:
 // open tasks + latest 50 done, latest digest in full, digest index,
-// deadlines sorted by date, latest 30 activity rows, and every daily
-// report from the last 7 days.
+// deadlines sorted by date, latest 30 activity rows, every daily
+// report from the last 7 days, and all projects.
 
 async function hStateGet({ env }) {
   await ensureReportsTable(env);
+  await ensureProjectsTable(env);
 
   const open = await env.DB.prepare(
     `SELECT * FROM tasks WHERE status != 'done'
@@ -213,6 +284,13 @@ async function hStateGet({ env }) {
     .bind(weekStart)
     .all();
 
+  // Projects: active first, then paused, then done; oldest first within a
+  // group, so the sidebar group keeps its seeded order.
+  const projects = await env.DB.prepare(
+    `SELECT * FROM projects
+     ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, id ASC`
+  ).all();
+
   return json({
     tasks: [...(open.results || []), ...(done.results || [])],
     latestDigest: latestDigest || null,
@@ -220,6 +298,7 @@ async function hStateGet({ env }) {
     deadlines: deadlines.results || [],
     activity: activity.results || [],
     reports: reports.results || [],
+    projects: projects.results || [],
   });
 }
 
@@ -518,43 +597,126 @@ async function hReportsPost({ request, env }) {
   return json({ report }, existing ? 200 : 201);
 }
 
+// ---- ./functions/api/projects.js ----
+// POST /api/projects — add a project.
+// Body: { name (required), description, status (active|paused|done), actor }
+
+async function hProjectsPost({ request, env }) {
+  await ensureProjectsTable(env);
+
+  const body = await parseBody(request);
+  if (!body) return err('Body must be valid JSON.', 400);
+
+  const name = cleanStr(body.name, 200).trim();
+  if (!name) return err('name is required.', 400);
+
+  const status = validProjectStatus(body.status, 'active');
+  if (status === undefined) return err('status must be one of: active, paused, done.', 400);
+
+  const actor = getActor(request, body);
+  const ts = nowISO();
+  const result = await env.DB.prepare(
+    'INSERT INTO projects (name, description, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  )
+    .bind(name, cleanStr(body.description, 2000), status, actor, ts, ts)
+    .run();
+
+  await writeActivity(env, { actor, action: 'project_added', note: name });
+
+  const project = await env.DB.prepare('SELECT * FROM projects WHERE id = ?')
+    .bind(result.meta.last_row_id)
+    .first();
+  return json({ project }, 201);
+}
+
+// ---- ./functions/api/projects/[id].js ----
+// PATCH /api/projects/:id — partial update of name, description, status.
+
+async function hProjectPatch({ request, env, params }) {
+  await ensureProjectsTable(env);
+
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) return err('Invalid project id.', 400);
+
+  const existing = await env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(id).first();
+  if (!existing) return err('Project not found.', 404);
+
+  const body = await parseBody(request);
+  if (!body) return err('Body must be valid JSON.', 400);
+
+  const next = { ...existing };
+
+  if ('name' in body) {
+    const name = cleanStr(body.name, 200).trim();
+    if (!name) return err('name cannot be empty.', 400);
+    next.name = name;
+  }
+  if ('description' in body) next.description = cleanStr(body.description, 2000);
+  if ('status' in body) {
+    const status = validProjectStatus(body.status, 'active');
+    if (status === undefined) return err('status must be one of: active, paused, done.', 400);
+    next.status = status;
+  }
+
+  await env.DB.prepare(
+    'UPDATE projects SET name = ?, description = ?, status = ?, updated_at = ? WHERE id = ?'
+  )
+    .bind(next.name, next.description, next.status, nowISO(), id)
+    .run();
+
+  const actor = getActor(request, body);
+  await writeActivity(env, { actor, action: 'project_updated', note: next.name });
+
+  const project = await env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(id).first();
+  return json({ project });
+}
+
 const INDEX_HTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>JesutofunmiOS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <style>
-/* JesutofunmiOS — hand-rolled styles. Warm paper, deep-green ink, editorial calm.
-   No frameworks, no gradients, no external assets. */
+/* JesutofunmiOS — Daybreak design language.
+   Figtree throughout, sage sidebar, warm ivory main, paper cards,
+   one deep-green panel (the Brief). No frameworks, no gradients. */
 
 :root {
   --green: #234d3b;
   --deep: #193c2e;
+  --panel-green: #1f4d3a;
   --sage: #e8eee5;
-  --sage-soft: #eaf0e5;
-  --ivory: #f8f7f2;
+  --sage-soft: #eef2e9;
+  --sidebar-bg: #edf1e9;
+  --ivory: #f7f5ef;
   --paper: #fffefa;
-  --panel: #f3f2e9;
-  --line: #e5e5da;
-  --line-soft: #eeece0;
-  --muted: #76796d;
-  --ink: #28362c;
-  --ink-soft: #57604f;
+  --panel: #f2f0e6;
+  --line: #e3e2d3;
+  --line-soft: #edeade;
+  --muted: #7a7d6e;
+  --ink: #22302a;
+  --ink-soft: #59614f;
   --caramel: #966a43;
+  --caramel-bg: #f3e3cf;
   --butter: #f5e8aa;
+  --butter-bg: #faf3d3;
+  --rose-bg: #f7e4dd;
   --red: #a34d3c;
-  --radius: 14px;
+  --radius: 18px;
   --shadow: 0 1px 2px rgba(35, 77, 59, 0.05);
-  --shadow-lift: 0 2px 6px rgba(35, 77, 59, 0.06), 0 14px 30px -18px rgba(25, 60, 46, 0.22);
-  --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  --shadow-lift: 0 2px 6px rgba(35, 77, 59, 0.06), 0 16px 32px -18px rgba(25, 60, 46, 0.25);
+  --font: "Figtree", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font);
   font-size: 0.9375rem;
   background: var(--ivory);
   color: var(--ink);
@@ -565,15 +727,16 @@ body {
 .hidden { display: none !important; }
 .muted { color: var(--muted); font-size: 0.85rem; }
 .grow { flex: 1; min-width: 0; }
-h2 { font-size: 1.02rem; font-weight: 700; margin: 0; }
+h2 { font-size: 1.02rem; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
 h3 { font-size: 0.95rem; }
 a { color: var(--green); }
 
 /* ---------- buttons & forms ---------- */
 .btn {
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 0.55rem 1rem;
+  font-family: inherit;
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
@@ -581,7 +744,7 @@ a { color: var(--green); }
   color: var(--ink);
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
-.btn-primary { background: var(--green); color: var(--paper); }
+.btn-primary { background: var(--green); color: #fff; }
 .btn-primary:hover { background: var(--deep); }
 .btn-ghost { background: var(--paper); border-color: var(--line); color: var(--ink-soft); }
 .btn-ghost:hover { border-color: #cfcfbc; color: var(--ink); }
@@ -619,12 +782,12 @@ textarea { resize: vertical; }
   align-items: center;
   justify-content: center;
   padding: 1rem;
-  background: var(--ivory);
+  background: var(--sidebar-bg);
 }
 .gate-card {
   background: var(--paper);
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 20px;
   box-shadow: var(--shadow-lift);
   padding: 2.1rem;
   width: 100%;
@@ -639,14 +802,11 @@ textarea { resize: vertical; }
   height: 48px;
   margin-bottom: 0.9rem;
   background: var(--green);
-  color: var(--ivory);
-  font-family: var(--serif);
-  font-weight: 600;
-  font-size: 0.85rem;
-  letter-spacing: 0.04em;
-  border-radius: 10px;
+  color: #fff;
+  border-radius: 12px;
 }
-.gate-card h1 { margin: 0 0 0.25rem; font-family: var(--serif); font-size: 1.7rem; font-weight: 600; }
+.gate-mark svg { width: 27px; height: 27px; }
+.gate-card h1 { margin: 0 0 0.25rem; font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; }
 .gate-sub { color: var(--ink-soft); margin: 0 0 1.25rem; font-size: 0.92rem; }
 .gate-note { color: var(--muted); font-size: 0.8rem; margin-top: 1rem; }
 
@@ -654,32 +814,27 @@ textarea { resize: vertical; }
 .layout { display: flex; align-items: stretch; min-height: 100vh; }
 
 .sidebar {
-  width: 250px;
-  flex: 0 0 250px;
+  width: 264px;
+  flex: 0 0 264px;
   position: sticky;
   top: 0;
   height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  padding: 1.15rem 0.9rem 1rem;
-  background: #fbfaf6;
-  border-right: 1px solid var(--line);
+  gap: 0.35rem;
+  padding: 1.2rem 0.95rem 1rem;
+  background: var(--sidebar-bg);
+  overflow-y: auto;
 }
-.brand { display: flex; align-items: center; gap: 0.6rem; padding: 0.15rem 0.35rem 0.9rem; }
-.brand-mark {
-  width: 13px;
-  height: 13px;
-  flex: 0 0 13px;
-  background: var(--green);
-  border-radius: 3px;
-}
-.brand-name { font-family: var(--serif); font-size: 1.28rem; font-weight: 600; color: var(--ink); }
+.brand { display: flex; align-items: center; gap: 0.55rem; padding: 0.1rem 0.35rem 1.1rem; }
+.brand-mark { display: inline-flex; color: var(--deep); }
+.brand-mark svg { width: 27px; height: 27px; }
+.brand-name { font-size: 1.24rem; font-weight: 800; letter-spacing: -0.02em; color: var(--deep); }
 
 .side-label {
-  margin: 0.2rem 0.35rem 0.45rem;
+  margin: 1rem 0.35rem 0.4rem;
   font-size: 0.68rem;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.13em;
   text-transform: uppercase;
   color: var(--muted);
@@ -690,28 +845,52 @@ textarea { resize: vertical; }
   align-items: center;
   gap: 0.65rem;
   width: 100%;
-  padding: 0.6rem 0.7rem;
+  padding: 0.62rem 0.75rem;
   background: transparent;
   border: none;
-  border-radius: 10px;
+  border-radius: 12px;
   color: var(--ink-soft);
-  font-size: 0.94rem;
+  font-family: inherit;
+  font-size: 0.95rem;
   font-weight: 500;
   text-align: left;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
 .tab svg { width: 20px; height: 20px; flex: 0 0 20px; }
-.tab:hover { background: var(--panel); color: var(--ink); }
-.tab.active { background: var(--sage); color: var(--deep); font-weight: 600; }
+.tab:hover { background: rgba(255, 254, 250, 0.65); color: var(--ink); }
+.tab.active { background: var(--green); color: #fff; font-weight: 600; box-shadow: 0 2px 8px rgba(25, 60, 46, 0.25); }
+.tab.active:hover { background: var(--deep); color: #fff; }
+
+.project-nav { display: flex; flex-direction: column; gap: 0.1rem; }
+.project-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.42rem 0.75rem;
+  background: none;
+  border: none;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.project-nav-item:hover { background: rgba(255, 254, 250, 0.65); color: var(--ink); }
+.project-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; }
+.project-nav-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: 0.55rem; padding-top: 0.9rem; }
 .actor-card {
   display: flex;
   align-items: center;
   gap: 0.65rem;
-  background: var(--sage-soft);
-  border-radius: 12px;
+  background: rgba(255, 254, 250, 0.6);
+  border-radius: 14px;
   padding: 0.6rem 0.7rem;
 }
 .actor-avatar {
@@ -723,9 +902,8 @@ textarea { resize: vertical; }
   flex: 0 0 36px;
   border-radius: 50%;
   background: var(--green);
-  color: var(--ivory);
-  font-family: var(--serif);
-  font-weight: 600;
+  color: #fff;
+  font-weight: 700;
   font-size: 1rem;
 }
 .actor-meta { min-width: 0; }
@@ -738,52 +916,32 @@ main {
   flex: 1;
   min-width: 0;
   width: 100%;
-  max-width: 1320px;
+  max-width: 1360px;
   margin: 0 auto;
-  padding: 2rem 2rem 3.5rem;
-}
-.view-title { font-family: var(--serif); font-size: 1.45rem; font-weight: 600; }
-
-/* ---------- today: greeting over a two-column grid ---------- */
-.today-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(320px, 360px);
-  gap: 28px;
-  align-items: start;
-}
-.today-main, .today-rail { min-width: 0; }
-/* The rail's first block sits beside the digest card, not under a section,
-   so it drops the hairline separator the stacked blocks use. */
-.today-rail .today-block:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
-@media (max-width: 1080px) {
-  .today-grid { grid-template-columns: 1fr; }
-  .today-rail .today-block:first-of-type { border-top: 1px solid var(--line); margin-top: 2.1rem; padding-top: 1.5rem; }
+  padding: 1.9rem 2.2rem 3.5rem;
 }
 
-.hero { margin: 0.4rem 0 1.9rem; }
+/* ---------- view headers ---------- */
+.view-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.35rem;
+}
 .eyebrow {
-  margin: 0 0 0.7rem;
+  margin: 0 0 0.35rem;
   font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.15em;
+  font-weight: 700;
+  letter-spacing: 0.13em;
   text-transform: uppercase;
   color: var(--muted);
 }
-.hero-title {
-  margin: 0;
-  font-family: var(--serif);
-  font-size: clamp(2.3rem, 4.8vw, 3.3rem);
-  font-weight: 500;
-  line-height: 1.08;
-  color: var(--ink);
-}
-.hero-title em { font-style: italic; }
-.hero-sub { margin: 0.75rem 0 0; color: var(--ink-soft); font-size: 1rem; }
-.counts-line { margin: 0 0 1.2rem; color: var(--muted); font-size: 0.86rem; }
-
-.today-block { border-top: 1px solid var(--line); margin-top: 2.1rem; padding-top: 1.5rem; }
-.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
-.section-head h2 { font-family: var(--serif); font-size: 1.28rem; font-weight: 600; }
+.view-title { margin: 0; font-size: 2rem; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; color: var(--ink); }
+.head-actions { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.filter-label { display: flex; align-items: center; gap: 0.5rem; margin: 0; }
+.filter-label select { width: auto; margin: 0; }
 
 /* ---------- cards ---------- */
 .card {
@@ -791,21 +949,133 @@ main {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 1.3rem 1.4rem;
+  padding: 1.25rem 1.35rem;
   margin-bottom: 1.1rem;
 }
-.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.7rem; }
-.card-eyebrow {
-  margin: 0 0 0.3rem;
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--caramel);
+.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.55rem; }
+.card-head h2 { font-size: 1.05rem; font-weight: 700; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
+.section-head h2 { font-size: 1.05rem; font-weight: 700; }
+.quiet-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s ease;
 }
-#todayDigestTitle, #digestViewTitle { font-family: var(--serif); font-size: 1.32rem; font-weight: 600; line-height: 1.25; }
+.quiet-link:hover { color: var(--green); }
 
-/* ---------- week strip ---------- */
+/* ---------- today grid ---------- */
+.today-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 370px);
+  gap: 26px;
+  align-items: start;
+}
+.today-main, .today-rail { min-width: 0; }
+@media (max-width: 1080px) {
+  .today-grid { grid-template-columns: 1fr; }
+}
+.counts-line { margin: 0.2rem 0.3rem 0; color: var(--muted); font-size: 0.86rem; }
+
+/* ---------- brief panel (deep green) ---------- */
+.brief-panel {
+  background: var(--panel-green);
+  border-radius: 20px;
+  box-shadow: 0 10px 26px -14px rgba(25, 60, 46, 0.5);
+  padding: 1.45rem 1.6rem 1.3rem;
+  margin-bottom: 1.1rem;
+  color: #fff;
+}
+.brief-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.brief-label { font-size: 0.98rem; font-weight: 700; }
+.brief-meta { color: rgba(255, 255, 255, 0.62); font-size: 0.82rem; white-space: nowrap; }
+.brief-title { margin: 0.85rem 0 0.3rem; font-size: 1.14rem; font-weight: 700; line-height: 1.3; color: #fff; }
+.brief-body { color: rgba(255, 255, 255, 0.9); font-size: 0.94rem; max-height: 330px; overflow-y: auto; padding-right: 0.3rem; }
+.brief-body h2, .brief-body h3, .brief-body h4 { color: #fff; font-weight: 700; }
+.brief-body a { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
+.brief-body .muted { color: rgba(255, 255, 255, 0.62); }
+.brief-body code { background: rgba(255, 255, 255, 0.15); color: #fff; }
+.brief-body hr { border-top-color: rgba(255, 255, 255, 0.22); }
+.brief-body::-webkit-scrollbar { width: 6px; }
+.brief-body::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.25); border-radius: 3px; }
+
+/* ---------- attention (tasks-style card) ---------- */
+.attention-card { padding-bottom: 0.6rem; }
+.attention-row {
+  display: flex;
+  gap: 0.8rem;
+  align-items: flex-start;
+  padding: 0.75rem 0.15rem;
+  border-bottom: 1px solid var(--line-soft);
+  cursor: pointer;
+  border-radius: 6px;
+}
+.attention-row:last-child { border-bottom: none; }
+.attention-row:hover .att-title { color: var(--green); }
+.att-circle {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  margin-top: 1px;
+  border: 1.6px solid #c6c8b2;
+  border-radius: 50%;
+}
+.att-title { font-weight: 600; font-size: 0.95rem; line-height: 1.35; transition: color 0.15s ease; }
+.att-meta { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.15rem; color: var(--muted); font-size: 0.82rem; }
+.owner-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #b5b5a4; }
+.owner-dot-Jesutofunmi { background: #c39a1d; }
+.owner-dot-Nayden { background: #4a7a5f; }
+.owner-dot-Claude { background: #b07f4f; }
+.owner-dot-ChatGPT { background: #6f9a7d; }
+.owner-dot-Instinct { background: #8a9078; }
+.attention-row .chip { margin-top: 2px; }
+
+/* ---------- activity ---------- */
+.activity-block { margin-top: 1.6rem; }
+.activity-item {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+.activity-item:last-child { border-bottom: none; }
+.activity-item .actor { font-weight: 600; color: var(--ink); }
+
+/* ---------- deadlines card (today rail) ---------- */
+.deadlines-card { padding-bottom: 0.65rem; }
+.dl-row {
+  display: flex;
+  gap: 0.85rem;
+  align-items: center;
+  padding: 0.7rem 0.1rem;
+  border-bottom: 1px solid var(--line-soft);
+  cursor: pointer;
+}
+.dl-row:last-child { border-bottom: none; }
+.dl-row:hover .dl-title { color: var(--green); }
+.dl-date {
+  flex: 0 0 52px;
+  width: 52px;
+  padding: 0.4rem 0 0.45rem;
+  background: var(--panel);
+  border-radius: 12px;
+  text-align: center;
+}
+.dl-mon { display: block; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+.dl-day { display: block; font-size: 1.22rem; font-weight: 800; line-height: 1.1; color: var(--ink); }
+.dl-title { font-weight: 600; font-size: 0.93rem; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 0.15s ease; }
+.dl-context { color: var(--muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- week strip (this week card) ---------- */
 .week-nav { display: flex; align-items: center; gap: 0.15rem; }
 .week { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.3rem; }
 .week-nav-btn {
@@ -815,6 +1085,7 @@ main {
   padding: 0.35rem 0.4rem;
   border-radius: 8px;
   color: var(--muted);
+  font-family: inherit;
   font-size: 1.3rem;
   line-height: 1;
   cursor: pointer;
@@ -840,11 +1111,11 @@ main {
 .week-day:hover { background: var(--sage-soft); }
 .week-day:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .week-letter { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em; color: var(--muted); }
-.week-num { font-size: 1rem; font-weight: 600; line-height: 1.15; color: var(--ink); }
+.week-num { font-size: 1rem; font-weight: 700; line-height: 1.15; color: var(--ink); }
 .week-day.today { background: var(--green); }
 .week-day.today:hover { background: var(--deep); }
-.week-day.today .week-letter { color: rgba(248, 247, 242, 0.72); }
-.week-day.today .week-num { color: var(--ivory); }
+.week-day.today .week-letter { color: rgba(255, 255, 255, 0.72); }
+.week-day.today .week-num { color: #fff; }
 .week-dot {
   position: absolute;
   bottom: 0.42rem;
@@ -857,10 +1128,24 @@ main {
 }
 .week-day.today .week-dot { background: var(--butter); }
 
+/* today's dated items, under the week strip */
+.today-item {
+  margin-top: 0.55rem;
+  padding: 0.6rem 0.8rem;
+  border-left: 3px solid var(--green);
+  border-radius: 10px;
+  background: var(--sage-soft);
+}
+.today-item.tint-butter { background: var(--butter-bg); border-left-color: #c39a1d; }
+.today-item.tint-rose { background: var(--rose-bg); border-left-color: var(--red); }
+.ti-title { font-weight: 600; font-size: 0.9rem; line-height: 1.3; }
+.ti-sub { color: var(--muted); font-size: 0.78rem; margin-top: 0.1rem; }
+.today-items-empty { margin: 0.6rem 0 0.2rem; }
+
 /* ---------- chips ---------- */
 .chip {
   display: inline-block;
-  padding: 0.13rem 0.55rem;
+  padding: 0.14rem 0.55rem;
   border-radius: 999px;
   font-size: 0.72rem;
   font-weight: 600;
@@ -872,33 +1157,35 @@ main {
 .owner-ChatGPT { background: var(--sage-soft); color: #486857; }
 .owner-Instinct { background: #e3e5d9; color: var(--ink-soft); }
 .owner-Unassigned { background: var(--panel); color: var(--muted); }
-.due-overdue { background: #f4e2dc; color: var(--red); }
+.due-overdue { background: var(--rose-bg); color: var(--red); }
 .due-soon { background: var(--butter); color: #6e5410; }
 .due-normal { background: var(--sage-soft); color: var(--ink-soft); }
 .due-done { background: var(--panel); color: var(--muted); }
+.rel-rose { background: var(--rose-bg); color: var(--red); }
+.rel-butter { background: var(--butter); color: #6e5410; }
+.rel-grey { background: var(--panel); color: var(--ink-soft); }
+.status-active { background: var(--sage); color: var(--deep); }
+.status-paused { background: var(--butter); color: #6e5410; }
+.status-done { background: var(--panel); color: var(--muted); }
 
 /* ---------- board ---------- */
-.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
-.toolbar label { margin: 0; display: flex; align-items: center; gap: 0.5rem; }
-.toolbar select { width: auto; margin: 0; }
-.board { display: grid; grid-template-columns: repeat(4, minmax(230px, 1fr)); gap: 0.9rem; padding-bottom: 0.4rem; }
-.column { background: var(--panel); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 0.75rem; min-height: 220px; }
-.col-head {
-  margin: 0.15rem 0.25rem 0.7rem;
-  font-size: 0.74rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: var(--ink-soft);
+.board { display: grid; grid-template-columns: repeat(4, minmax(230px, 1fr)); gap: 1rem; padding-bottom: 0.4rem; }
+.column {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0.9rem;
+  min-height: 240px;
 }
-.col-count { color: var(--muted); font-weight: 600; }
+.col-head { margin: 0.1rem 0.2rem 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--ink); }
+.col-count { color: var(--muted); font-weight: 600; font-size: 0.85rem; }
 .col-body { display: flex; flex-direction: column; gap: 0.6rem; min-height: 60px; }
 .column.drag-over { outline: 2px dashed var(--green); outline-offset: -4px; }
 .task-card {
-  background: var(--paper);
+  background: #fbfaf4;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
+  border-radius: 14px;
   padding: 0.75rem 0.85rem;
   cursor: pointer;
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
@@ -909,73 +1196,86 @@ main {
 .task-meta { display: flex; gap: 0.35rem; flex-wrap: wrap; align-items: center; }
 .task-evidence { margin-top: 0.5rem; font-size: 0.78rem; color: var(--ink-soft); word-break: break-word; }
 .col-empty { color: var(--muted); font-size: 0.84rem; padding: 0.5rem 0.3rem; }
-.board-hint { margin-top: 0.5rem; }
+.board-hint { margin-top: 0.6rem; }
 
-/* ---------- today lists ---------- */
-.attention-item {
-  display: flex;
-  gap: 0.9rem;
-  align-items: flex-start;
-  padding: 0.7rem 0;
-  border-bottom: 1px solid var(--line-soft);
-  font-size: 0.92rem;
-}
-.attention-item:last-child { border-bottom: none; }
-.att-num {
-  font-family: var(--serif);
-  font-style: italic;
-  font-size: 1rem;
-  line-height: 1.4;
-  color: var(--caramel);
-  min-width: 1.7rem;
-}
-.attention-item a { color: var(--ink); font-weight: 550; text-decoration: none; }
-.attention-item a:hover { color: var(--green); text-decoration: underline; }
-
-.focus-line {
-  display: flex;
-  gap: 0.6rem;
+/* ---------- calendar ---------- */
+.cal-card { padding: 1.3rem 1.4rem 1.4rem; }
+.cal-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.9rem; }
+.cal-head h2 { font-size: 1.18rem; font-weight: 800; letter-spacing: -0.01em; }
+.cal-nav { display: flex; align-items: center; gap: 0.35rem; }
+.cal-nav-btn {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
   align-items: center;
-  background: var(--sage-soft);
-  border: 1px solid #dde5d4;
-  border-radius: 12px;
-  padding: 0.95rem 1.1rem;
-  font-size: 0.94rem;
-}
-.focus-line a { color: var(--ink); font-weight: 600; text-decoration: none; }
-.focus-line a:hover { color: var(--green); text-decoration: underline; }
-
-/* ---------- upcoming deadlines callout (Today) ---------- */
-.deadlines-callout { background: var(--sage-soft); border: 1px solid #dde5d4; }
-.callout-title { font-family: var(--serif); font-size: 1.32rem; font-weight: 600; color: var(--deep); }
-.upcoming-item {
-  display: flex;
-  gap: 0.9rem;
-  align-items: center;
-  padding: 0.6rem 0;
-  border-bottom: 1px solid #dde5d4;
-  font-size: 0.94rem;
-}
-.upcoming-item:last-child { border-bottom: none; }
-.upcoming-date { display: flex; align-items: baseline; gap: 0.35rem; min-width: 76px; }
-.u-day { font-family: var(--serif); font-size: 1.45rem; font-weight: 600; line-height: 1; color: var(--caramel); }
-.u-mon { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); }
-.upcoming-item.today .u-day, .upcoming-item.overdue .u-day { color: var(--red); }
-.upcoming-title { font-weight: 550; }
-
-.activity-item {
-  display: flex;
-  gap: 0.6rem;
-  align-items: flex-start;
-  padding: 0.55rem 0;
-  border-bottom: 1px solid var(--line-soft);
+  justify-content: center;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
   color: var(--ink-soft);
-  font-size: 0.85rem;
+  font-family: inherit;
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
-.activity-item:last-child { border-bottom: none; }
-.activity-item .actor { font-weight: 600; color: var(--ink); }
+.cal-nav-btn:hover { border-color: #cfcfbc; color: var(--green); }
+.cal-weekdays, .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.cal-weekdays span {
+  text-align: center;
+  padding: 0.25rem 0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.cal-cell {
+  min-height: 96px;
+  padding: 0.45rem 0.5rem;
+  background: var(--paper);
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.cal-cell.out { background: transparent; }
+.cal-cell.out .cal-num { color: var(--muted); opacity: 0.55; }
+.cal-cell.has-deadline { cursor: pointer; }
+.cal-cell.has-deadline:hover { border-color: var(--caramel); }
+.cal-cell-top { display: flex; align-items: center; gap: 0.35rem; }
+.cal-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 25px;
+  height: 25px;
+  padding: 0 4px;
+  border-radius: 50%;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.cal-cell.is-today .cal-num { background: var(--green); color: #fff; }
+.cal-dots { display: inline-flex; gap: 3px; }
+.cal-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+.cal-chips { display: flex; flex-direction: column; gap: 3px; margin-top: 0.4rem; }
+.cal-chip {
+  padding: 0.13rem 0.4rem;
+  border-radius: 6px;
+  background: var(--caramel-bg);
+  color: #7d5636;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cal-more { font-size: 0.68rem; color: var(--muted); }
+@media (max-width: 700px) {
+  .cal-cell { min-height: 58px; padding: 0.35rem; }
+  .cal-chips { display: none; }
+}
 
-/* ---------- deadlines ---------- */
+/* ---------- deadlines view ---------- */
 .deadline-row {
   display: flex;
   gap: 1rem;
@@ -990,33 +1290,36 @@ main {
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
 .deadline-row:hover { box-shadow: var(--shadow-lift); border-color: #d6d6c2; }
-/* Arriving from a calendar-day click: the row glows sage, then settles. */
 @keyframes rowFlash {
   0%, 55% { background: var(--sage); border-color: var(--green); }
   100% { background: var(--paper); border-color: var(--line); }
 }
 .deadline-row.flash { animation: rowFlash 2.4s ease-out forwards; }
-.deadline-date { text-align: center; min-width: 58px; }
-.deadline-date .d-day { font-family: var(--serif); font-size: 1.7rem; font-weight: 600; line-height: 1.05; }
-.deadline-date .d-mon { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); }
+.deadline-date {
+  flex: 0 0 58px;
+  width: 58px;
+  padding: 0.45rem 0 0.5rem;
+  background: var(--panel);
+  border-radius: 12px;
+  text-align: center;
+}
+.deadline-date .d-day { display: block; font-size: 1.5rem; font-weight: 800; line-height: 1.1; }
+.deadline-date .d-mon { display: block; font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
 .deadline-main { flex: 1; min-width: 0; }
 .deadline-title { font-weight: 600; }
 .deadline-notes { color: var(--ink-soft); font-size: 0.86rem; }
 .past { opacity: 0.55; }
 
-/* ---------- digests ---------- */
-.digests-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr); gap: 1.1rem; align-items: start; }
-@media (max-width: 980px) { .digests-grid { grid-template-columns: 1fr; } }
-/* The post form sits below the archive + reader, at a form's measure. */
-#digestForm { max-width: 800px; }
-.digest-item { padding: 0.65rem 0.75rem; border-radius: 10px; cursor: pointer; }
-.digest-item:hover { background: var(--sage-soft); }
-.digest-item.selected { background: var(--sage); }
-.digest-item .d-title { font-weight: 600; font-size: 0.92rem; }
-.digest-item .d-meta { color: var(--muted); font-size: 0.78rem; }
+/* ---------- projects ---------- */
+.project-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+.project-card { margin-bottom: 0; cursor: pointer; transition: box-shadow 0.15s ease, border-color 0.15s ease; }
+.project-card:hover { box-shadow: var(--shadow-lift); border-color: #d6d6c2; }
+.project-card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.4rem; }
+.project-name { margin: 0; font-size: 1.05rem; font-weight: 700; }
+.project-desc { margin: 0; color: var(--ink-soft); font-size: 0.9rem; }
 
 /* ---------- reports ---------- */
-.reports-col { max-width: 860px; margin: 0 auto; width: 100%; }
+.reports-col { max-width: 880px; margin: 0 auto; width: 100%; }
 .report-hint { margin: 0 0 0.4rem; }
 .report-day { padding: 1.05rem 1.3rem 0.55rem; }
 .report-day-head {
@@ -1033,7 +1336,7 @@ main {
   text-align: left;
   cursor: pointer;
 }
-.report-day-title { font-family: var(--serif); font-size: 1.13rem; font-weight: 600; }
+.report-day-title { font-size: 1.1rem; font-weight: 700; }
 .report-day-meta { display: flex; align-items: baseline; gap: 0.8rem; }
 .report-toggle { font-size: 0.85rem; font-weight: 600; color: var(--green); }
 .report-day.closed { padding-bottom: 0.45rem; }
@@ -1044,9 +1347,9 @@ main {
 
 /* ---------- markdown ---------- */
 .markdown { font-size: 0.95rem; }
-.markdown h1, .markdown h2, .markdown h3, .markdown h4 { font-family: var(--serif); font-weight: 600; margin: 0.9em 0 0.4em; line-height: 1.3; }
-.markdown h1 { font-size: 1.25rem; }
-.markdown h2 { font-size: 1.12rem; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { font-weight: 700; margin: 0.9em 0 0.4em; line-height: 1.3; letter-spacing: -0.01em; }
+.markdown h1 { font-size: 1.22rem; }
+.markdown h2 { font-size: 1.1rem; }
 .markdown h3 { font-size: 1rem; }
 .markdown p { margin: 0.45em 0; }
 .markdown ul, .markdown ol { margin: 0.4em 0 0.6em; padding-left: 1.35rem; }
@@ -1057,8 +1360,7 @@ main {
 
 /* ---------- prose (agents page) ---------- */
 .prose { max-width: 780px; line-height: 1.65; }
-.prose h2 { font-family: var(--serif); font-size: 1.55rem; font-weight: 600; margin-bottom: 0.6rem; }
-.prose h3 { margin: 1.2rem 0 0.4rem; font-size: 1.02rem; }
+.prose h3 { margin: 1.2rem 0 0.4rem; font-size: 1.02rem; font-weight: 700; }
 .prose p, .prose li { font-size: 0.95rem; }
 .prose ol, .prose ul { padding-left: 1.4rem; }
 .prose li { margin: 0.35rem 0; }
@@ -1078,14 +1380,14 @@ main {
 .modal-card {
   background: var(--paper);
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 20px;
   box-shadow: var(--shadow-lift);
   padding: 1.4rem 1.5rem;
   width: 100%;
   max-width: 560px;
 }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.9rem; }
-.modal-head h2 { font-family: var(--serif); font-size: 1.2rem; font-weight: 600; }
+.modal-head h2 { font-size: 1.18rem; font-weight: 800; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 0.6rem; margin-top: 0.6rem; }
 
 /* ---------- responsive: sidebar becomes a top bar ---------- */
@@ -1101,13 +1403,11 @@ main {
     align-items: center;
     gap: 0.5rem 0.8rem;
     padding: 0.7rem 0.9rem;
-    border-right: none;
-    border-bottom: 1px solid var(--line);
   }
   .brand { padding: 0; }
-  .side-label { display: none; }
   .tabs { flex-direction: row; flex-wrap: nowrap; overflow-x: auto; flex: 1 1 auto; padding-bottom: 0.15rem; }
   .tab { width: auto; white-space: nowrap; padding: 0.5rem 0.65rem; }
+  #projectNavGroup { display: none; }
   .sidebar-foot {
     margin-top: 0;
     padding-top: 0;
@@ -1122,7 +1422,8 @@ main {
   main { padding: 1.3rem 1rem 3rem; }
   .board { grid-template-columns: 1fr; }
   .column { min-height: 0; }
-  .hero-title { font-size: 2.2rem; }
+  .view-title { font-size: 1.65rem; }
+  .project-list { grid-template-columns: 1fr; }
 }
 
 </style>
@@ -1132,7 +1433,9 @@ main {
 <!-- ============ PASSCODE GATE ============ -->
 <div id="gate" class="gate">
   <form id="gateForm" class="gate-card">
-    <div class="gate-mark">JOS</div>
+    <div class="gate-mark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6.5 17a5.5 5.5 0 0 1 11 0"/><path d="M12 5.5v2.2M4.9 8.4l1.6 1.6M19.1 8.4l-1.6 1.6M2.5 17h19M5 20.5h14"/></svg>
+    </div>
     <h1>JesutofunmiOS</h1>
     <p class="gate-sub">Jesutofunmi Adewole's project board — for her and her assistants.</p>
     <label for="passcodeInput">Team passcode</label>
@@ -1148,37 +1451,47 @@ main {
   <div class="layout">
     <aside class="sidebar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M6.5 17a5.5 5.5 0 0 1 11 0"/><path d="M12 5.5v2.2M4.9 8.4l1.6 1.6M19.1 8.4l-1.6 1.6M2.5 17h19M5 20.5h14"/></svg>
+        </span>
         <span class="brand-name">JesutofunmiOS</span>
       </div>
 
-      <p class="side-label">Your space</p>
       <nav class="tabs" id="tabs">
         <button data-view="today" class="tab active">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11.2 12 4l8 7.2"/><path d="M6 9.8V19a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 18 19V9.8"/><path d="M9.8 20.5v-5.2h4.4v5.2"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.8"/><rect x="13" y="4" width="7" height="7" rx="1.8"/><rect x="4" y="13" width="7" height="7" rx="1.8"/><rect x="13" y="13" width="7" height="7" rx="1.8"/></svg>
           <span>Today</span>
         </button>
         <button data-view="board" class="tab">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="4.4" height="16" rx="1.4"/><rect x="9.8" y="4" width="4.4" height="10" rx="1.4"/><rect x="15.6" y="4" width="4.4" height="13" rx="1.4"/></svg>
-          <span>Board</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="m8.7 12.3 2.3 2.3 4.3-4.8"/></svg>
+          <span>Tasks</span>
+        </button>
+        <button data-view="calendar" class="tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.8h17"/><path d="M8 3v3.6M16 3v3.6"/></svg>
+          <span>Calendar</span>
         </button>
         <button data-view="deadlines" class="tab">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.8h17"/><path d="M8 3v3.6M16 3v3.6"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 21.5v-17"/><path d="M5.5 5c4.6-2.4 7.2 2 12.5.2v9.4c-5.3 1.8-7.9-2.6-12.5-.2"/></svg>
           <span>Deadlines</span>
+        </button>
+        <button data-view="projects" class="tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7A1.8 1.8 0 0 1 5.3 5.2h3.9L11.4 8h7.3A1.8 1.8 0 0 1 20.5 9.8v7.4a1.8 1.8 0 0 1-1.8 1.8H5.3A1.8 1.8 0 0 1 3.5 17.2z"/></svg>
+          <span>Projects</span>
         </button>
         <button data-view="reports" class="tab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3.5h6.8L18.5 8v11a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5z"/><path d="M13.8 3.5V8h4.7"/><path d="M8.7 12.3h6.6M8.7 15.8h6.6"/></svg>
           <span>Reports</span>
-        </button>
-        <button data-view="digests" class="tab">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3.5 8.5 4.7L12 12.9 3.5 8.2z"/><path d="m4.5 12.8 7.5 4.1 7.5-4.1"/><path d="m4.5 16.8 7.5 4.1 7.5-4.1"/></svg>
-          <span>Digests</span>
         </button>
         <button data-view="agents" class="tab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8.4" r="3.4"/><path d="M3.6 19.6c.6-3 2.7-4.7 5.4-4.7s4.8 1.7 5.4 4.7"/><circle cx="17.2" cy="9.4" r="2.5"/><path d="M16.2 15.1c2.1.3 3.6 1.8 4.1 4.1"/></svg>
           <span>Agents</span>
         </button>
       </nav>
+
+      <div id="projectNavGroup" class="hidden">
+        <p class="side-label">Projects</p>
+        <div id="projectNav" class="project-nav"></div>
+      </div>
 
       <div class="sidebar-foot">
         <div class="actor-card">
@@ -1202,117 +1515,171 @@ main {
     <main>
     <!-- ============ TODAY ============ -->
     <section id="view-today" class="view">
-      <div class="hero">
-        <p class="eyebrow" id="todayEyebrow"></p>
-        <h1 class="hero-title" id="heroTitle"></h1>
-        <p class="hero-sub" id="todayGreeting"></p>
+      <div class="view-head">
+        <div>
+          <p class="eyebrow" id="todayEyebrow"></p>
+          <h1 class="view-title">Today</h1>
+        </div>
+        <div class="head-actions">
+          <button id="newTaskBtnToday" class="btn btn-primary">+ Add task</button>
+        </div>
       </div>
 
       <div class="today-grid">
       <div class="today-main">
-        <div class="card deadlines-callout">
-          <div class="card-head">
-            <h2 class="callout-title">Upcoming deadlines</h2>
+        <div class="brief-panel">
+          <div class="brief-head">
+            <span class="brief-label">Brief</span>
+            <span class="brief-meta" id="todayDigestMeta"></span>
           </div>
-          <div id="upcomingList"></div>
+          <h2 class="brief-title" id="todayDigestTitle">Latest digest</h2>
+          <div id="todayDigestBody" class="markdown brief-body"></div>
         </div>
 
-        <div class="card digest-card">
+        <section class="card attention-card">
           <div class="card-head">
-            <div>
-              <p class="card-eyebrow">Your morning brief</p>
-              <h2 id="todayDigestTitle">Latest digest</h2>
-            </div>
-            <span id="todayDigestMeta" class="muted"></span>
-          </div>
-          <div id="todayDigestBody" class="markdown"></div>
-        </div>
-
-        <section class="today-block">
-          <div class="section-head">
             <h2>What deserves your attention</h2>
-            <span class="muted">overdue, and the next 72 hours</span>
+            <span class="muted" id="attentionCount"></span>
           </div>
           <div id="dueNowList"></div>
         </section>
 
-        <section class="today-block">
-          <div class="section-head"><h2>Today's focus</h2></div>
-          <div id="focusLine"></div>
+        <section class="activity-block">
+          <div class="section-head"><h2>Recent activity</h2></div>
+          <div id="activityList"></div>
         </section>
       </div>
 
       <aside class="today-rail">
-        <p class="counts-line" id="statsRow"></p>
-        <section class="today-block">
-          <div class="section-head"><h2>This week</h2><span class="muted" id="weekRange"></span></div>
+        <div class="card deadlines-card">
+          <div class="card-head">
+            <h2>Deadlines</h2>
+            <button type="button" class="quiet-link" id="deadlinesMore">Next 14 days <span aria-hidden="true">&#8594;</span></button>
+          </div>
+          <div id="todayDeadlines"></div>
+        </div>
+
+        <div class="card week-card">
+          <div class="card-head">
+            <h2>This week</h2>
+            <span class="muted" id="weekRange"></span>
+          </div>
           <div class="week-nav">
             <button type="button" class="week-nav-btn" id="weekPrev" aria-label="Previous week">&#8249;</button>
             <div id="weekStrip" class="week"></div>
             <button type="button" class="week-nav-btn" id="weekNext" aria-label="Next week">&#8250;</button>
           </div>
-        </section>
+          <div id="todayItems"></div>
+        </div>
 
-        <section class="today-block">
-          <div class="section-head"><h2>Recent activity</h2></div>
-          <div id="activityList"></div>
-        </section>
+        <p class="counts-line" id="statsRow"></p>
       </aside>
       </div>
     </section>
 
-    <!-- ============ BOARD ============ -->
+    <!-- ============ TASKS (BOARD) ============ -->
     <section id="view-board" class="view hidden">
-      <div class="toolbar">
-        <div class="toolbar-left">
-          <label for="ownerFilter">Owner</label>
-          <select id="ownerFilter">
-            <option value="">All owners</option>
-            <option>Jesutofunmi</option>
-            <option>Nayden</option>
-            <option>Claude</option>
-            <option>ChatGPT</option>
-            <option>Instinct</option>
-            <option>Unassigned</option>
-          </select>
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">The board</p>
+          <h1 class="view-title">Tasks</h1>
         </div>
-        <button id="newTaskBtn" class="btn btn-primary">Add a task</button>
+        <div class="head-actions">
+          <label class="filter-label" for="ownerFilter">Owner
+            <select id="ownerFilter">
+              <option value="">All owners</option>
+              <option>Jesutofunmi</option>
+              <option>Nayden</option>
+              <option>Claude</option>
+              <option>ChatGPT</option>
+              <option>Instinct</option>
+              <option>Unassigned</option>
+            </select>
+          </label>
+          <button id="newTaskBtn" class="btn btn-primary">+ Add task</button>
+        </div>
       </div>
       <div class="board" id="board">
         <div class="column" data-status="todo">
-          <h3 class="col-head col-todo">To Do <span class="col-count" data-count="todo"></span></h3>
+          <h3 class="col-head">To Do <span class="col-count" data-count="todo"></span></h3>
           <div class="col-body" data-col="todo"></div>
         </div>
         <div class="column" data-status="doing">
-          <h3 class="col-head col-doing">In Progress <span class="col-count" data-count="doing"></span></h3>
+          <h3 class="col-head">In Progress <span class="col-count" data-count="doing"></span></h3>
           <div class="col-body" data-col="doing"></div>
         </div>
         <div class="column" data-status="waiting">
-          <h3 class="col-head col-waiting">Waiting on Jesutofunmi <span class="col-count" data-count="waiting"></span></h3>
+          <h3 class="col-head">Waiting on Jesutofunmi <span class="col-count" data-count="waiting"></span></h3>
           <div class="col-body" data-col="waiting"></div>
         </div>
         <div class="column" data-status="done">
-          <h3 class="col-head col-done">Done <span class="col-count" data-count="done"></span></h3>
+          <h3 class="col-head">Done <span class="col-count" data-count="done"></span></h3>
           <div class="col-body" data-col="done"></div>
         </div>
       </div>
       <p class="muted board-hint">Tip: drag a card to another column to change its status, or click it to edit details, owner, due date and evidence.</p>
     </section>
 
+    <!-- ============ CALENDAR ============ -->
+    <section id="view-calendar" class="view hidden">
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Deadlines and due dates</p>
+          <h1 class="view-title">Calendar</h1>
+        </div>
+      </div>
+      <div class="card cal-card">
+        <div class="cal-head">
+          <h2 id="calTitle">Month</h2>
+          <div class="cal-nav">
+            <button type="button" class="btn btn-ghost btn-small" id="calTodayBtn">Today</button>
+            <button type="button" class="cal-nav-btn" id="calPrev" aria-label="Previous month">&#8249;</button>
+            <button type="button" class="cal-nav-btn" id="calNext" aria-label="Next month">&#8250;</button>
+          </div>
+        </div>
+        <div class="cal-weekdays" aria-hidden="true"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+        <div class="cal-grid" id="calGrid"></div>
+      </div>
+      <p class="muted">A caramel chip is a deadline — click the day to jump to it in Deadlines. Green dots are open tasks due that day.</p>
+    </section>
+
     <!-- ============ DEADLINES ============ -->
     <section id="view-deadlines" class="view hidden">
-      <div class="toolbar">
-        <button id="newDeadlineBtn" class="btn btn-primary">Add deadline</button>
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Dated commitments</p>
+          <h1 class="view-title">Deadlines</h1>
+        </div>
+        <div class="head-actions">
+          <button id="newDeadlineBtn" class="btn btn-primary">Add deadline</button>
+        </div>
       </div>
       <div id="deadlineList"></div>
+    </section>
+
+    <!-- ============ PROJECTS ============ -->
+    <section id="view-projects" class="view hidden">
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Standing areas of work</p>
+          <h1 class="view-title">Projects</h1>
+        </div>
+        <div class="head-actions">
+          <button id="newProjectBtn" class="btn btn-primary">Add project</button>
+        </div>
+      </div>
+      <div id="projectList" class="project-list"></div>
+      <p class="muted board-hint">Projects are their own section, like Deadlines. Tasks are not filed under projects — they stay on the board.</p>
     </section>
 
     <!-- ============ REPORTS ============ -->
     <section id="view-reports" class="view hidden">
       <div class="reports-col">
-        <div class="toolbar">
-          <h2 class="view-title">Daily reports</h2>
-          <span class="muted">everyone, every day — Nayden gathers them into the morning brief</span>
+        <div class="view-head">
+          <div>
+            <p class="eyebrow">Everyone, every day</p>
+            <h1 class="view-title">Reports</h1>
+          </div>
         </div>
         <div id="reportDays"></div>
         <form id="reportForm" class="card">
@@ -1330,50 +1697,28 @@ main {
             </label>
           </div>
           <label>Report (markdown) <textarea id="reportBody" rows="7" required placeholder="What was done, what is blocked, what you learned."></textarea></label>
-          <p class="muted report-hint">“Report by” is whose report it is; the sidebar's “Acting as” is who posts it. Instinct posts Jesutofunmi's report under her name.</p>
+          <p class="muted report-hint">&ldquo;Report by&rdquo; is whose report it is; the sidebar&rsquo;s &ldquo;Acting as&rdquo; is who posts it. Instinct posts Jesutofunmi's report under her name.</p>
           <p class="form-error" id="reportError"></p>
           <button type="submit" class="btn btn-primary" id="reportSubmitBtn">Post report</button>
         </form>
       </div>
     </section>
 
-    <!-- ============ DIGESTS ============ -->
-    <section id="view-digests" class="view hidden">
-      <div class="digests-grid">
-        <div class="card">
-          <div class="card-head"><h2>Archive</h2></div>
-          <div id="digestList"></div>
-        </div>
-        <div>
-          <div class="card digest-card">
-            <div class="card-head">
-              <h2 id="digestViewTitle">Select a digest</h2>
-              <span id="digestViewMeta" class="muted"></span>
-            </div>
-            <div id="digestViewBody" class="markdown"></div>
-          </div>
-        </div>
-      </div>
-      <form id="digestForm" class="card">
-        <div class="card-head"><h2>Post a digest</h2><span class="muted">usually Nayden, each morning</span></div>
-        <label>Title <input id="digestTitle" required maxlength="300" placeholder="e.g. Tuesday, Nov 10 — two replies, one deadline" /></label>
-        <label>Date <input id="digestDate" type="date" /></label>
-        <label>Body (markdown) <textarea id="digestBody" rows="8" required placeholder="## Headlines&#10;- What happened, what is due, what needs her."></textarea></label>
-        <p class="form-error" id="digestError"></p>
-        <button type="submit" class="btn btn-primary">Post digest</button>
-      </form>
-    </section>
-
     <!-- ============ AGENTS ============ -->
     <section id="view-agents" class="view hidden">
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">How this board works</p>
+          <h1 class="view-title">Agents</h1>
+        </div>
+      </div>
       <div class="card prose">
-        <h2>Agents</h2>
-        <p><strong>What this is.</strong> JesutofunmiOS is Jesutofunmi Adewole's personal project-management board. She is the owner and the decision-maker. The assistants who work here are <strong>Nayden</strong> (her main agent, who runs this board), <strong>Claude</strong>, <strong>ChatGPT</strong> and <strong>Instinct</strong>. Tasks on the Board belong to whoever is named in the owner field; a task whose owner is <em>Jesutofunmi</em> is hers alone — never do it for her, and never mark it done.</p>
-        <p><strong>Signing in.</strong> Use the team passcode, which Jesutofunmi gives you directly — it is not written anywhere on this site. After signing in, set <strong>“Acting as”</strong> (in the sidebar) to your own name before you change anything. Every write is recorded in the activity log under that name.</p>
+        <p><strong>What this is.</strong> JesutofunmiOS is Jesutofunmi Adewole's personal project-management board. She is the owner and the decision-maker. The assistants who work here are <strong>Nayden</strong> (her main agent, who runs this board), <strong>Claude</strong>, <strong>ChatGPT</strong> and <strong>Instinct</strong>. Tasks on the board belong to whoever is named in the owner field; a task whose owner is <em>Jesutofunmi</em> is hers alone — never do it for her, and never mark it done.</p>
+        <p><strong>Signing in.</strong> Use the team passcode, which Jesutofunmi gives you directly — it is not written anywhere on this site. After signing in, set <strong>&ldquo;Acting as&rdquo;</strong> (in the sidebar) to your own name before you change anything. Every write is recorded in the activity log under that name.</p>
         <h3>The rules</h3>
         <ol>
           <li><strong>Claim before you start.</strong> Set yourself as the task's owner and move it to <em>In Progress</em> before doing the work, so nobody duplicates it.</li>
-          <li><strong>Done means evidenced.</strong> Never mark a task Done without putting evidence in its evidence field — a link, a confirmation message, a submission reference, or an exact quote of the confirmation you received. “Done” with no evidence will be re-opened.</li>
+          <li><strong>Done means evidenced.</strong> Never mark a task Done without putting evidence in its evidence field — a link, a confirmation message, a submission reference, or an exact quote of the confirmation you received. &ldquo;Done&rdquo; with no evidence will be re-opened.</li>
           <li><strong>Blocked? Say so properly.</strong> Move the task to <em>Waiting on Jesutofunmi</em> and write exactly what you need from her in the details. Do not guess answers she has not given, and do not sit on a blocker silently.</li>
           <li><strong>Found new work?</strong> Add it as a new task with owner <em>Unassigned</em> and your name will be recorded as its creator. Do not fold new work into an unrelated task.</li>
           <li><strong>Never delete tasks.</strong> There is no delete here on purpose. If something is obsolete, move it to Done only if it genuinely happened, or set it Waiting and explain.</li>
@@ -1382,18 +1727,20 @@ main {
         </ol>
         <h3>How the board is organised</h3>
         <ul>
-          <li><strong>Today</strong> — Nayden's latest digest, what is due now, and recent activity.</li>
-          <li><strong>Board</strong> — To Do / In Progress / Waiting on Jesutofunmi / Done.</li>
+          <li><strong>Today</strong> — the morning brief, the deadlines card, this week's calendar, and what deserves attention.</li>
+          <li><strong>Tasks</strong> — the board: To Do / In Progress / Waiting on Jesutofunmi / Done.</li>
+          <li><strong>Calendar</strong> — deadlines and task due dates on a month grid.</li>
           <li><strong>Deadlines</strong> — the dated commitments. If you learn a new deadline, add it.</li>
-          <li><strong>Reports</strong> — one daily report per person. See “Daily reports” below.</li>
-          <li><strong>Digests</strong> — the morning briefings archive. Only post a digest if you are Nayden or Jesutofunmi asked you to.</li>
+          <li><strong>Projects</strong> — the standing areas of work. Projects are their own section; tasks are not filed under them.</li>
+          <li><strong>Reports</strong> — one daily report per person. See &ldquo;Daily reports&rdquo; below.</li>
+          <li><strong>The Brief</strong> — Nayden posts the morning brief through the API and it appears as the green Brief panel on Today. There is no separate brief page.</li>
         </ul>
         <h3>Report what you learn</h3>
         <p><strong>This board is the team's shared memory.</strong> Anything you learn while working with Jesutofunmi that Nayden cannot see — a deadline mentioned in your conversation, work completed, a plan changed, a new fact about her projects — goes on the board, put there by whoever learned it, the same day.</p>
         <ul>
           <li><strong>Deadlines</strong> go to Deadlines, with the date.</li>
-          <li><strong>Finished or ongoing work</strong> goes on the Board as a task, with the evidence on the card.</li>
-          <li><strong>Anything that fits neither</strong> goes in a short Digest post titled with the date, so the morning sync can file it properly.</li>
+          <li><strong>Finished or ongoing work</strong> goes on the board as a task, with the evidence on the card.</li>
+          <li><strong>Anything that fits neither</strong> goes to Nayden, who folds it into the morning brief.</li>
         </ul>
         <p>Jesutofunmi adds things the same way when she has context nobody else does — there is no separate process for her. The rule of thumb: if it happened outside Nayden's view, it goes on the board.</p>
         <h3>Daily reports</h3>
@@ -1473,6 +1820,31 @@ main {
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" data-close="deadlineModal">Cancel</button>
       <button type="submit" class="btn btn-primary">Save deadline</button>
+    </div>
+  </form>
+</div>
+
+<!-- ============ PROJECT EDITOR ============ -->
+<div id="projectModal" class="modal hidden">
+  <form id="projectForm" class="modal-card">
+    <div class="modal-head">
+      <h2 id="projectFormTitle">Add project</h2>
+      <button type="button" class="btn btn-ghost btn-small" data-close="projectModal">&#10005;</button>
+    </div>
+    <input type="hidden" id="projectId" />
+    <label>Name <input id="projectName" required maxlength="200" /></label>
+    <label>Description <textarea id="projectDescription" rows="4"></textarea></label>
+    <label>Status
+      <select id="projectStatus">
+        <option value="active">Active</option>
+        <option value="paused">Paused</option>
+        <option value="done">Done</option>
+      </select>
+    </label>
+    <p class="form-error" id="projectError"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" data-close="projectModal">Cancel</button>
+      <button type="submit" class="btn btn-primary">Save project</button>
     </div>
   </form>
 </div>
@@ -1708,9 +2080,11 @@ const ACTION_LABELS = {
   deadline_added: 'added a deadline',
   deadline_updated: 'updated a deadline',
   report_posted: 'posted a daily report',
+  project_added: 'added a project',
+  project_updated: 'updated a project',
 };
 
-/* ---------- week calendar (Today rail) ----------
+/* ---------- week calendar (This week card) ----------
    One Sunday–Saturday week at a time; weekOffset moves it with the
    chevrons. Days are real buttons: a click jumps to that date in the
    Deadlines view, flashing its rows — or landing on the nearest
@@ -1771,6 +2145,18 @@ $('#weekStrip').addEventListener('click', (e) => {
 });
 $('#weekPrev').addEventListener('click', () => { weekOffset -= 1; renderWeekStrip(); });
 $('#weekNext').addEventListener('click', () => { weekOffset += 1; renderWeekStrip(); });
+$('#deadlinesMore').addEventListener('click', () => showView('deadlines'));
+
+// Relative chip for the Today deadlines card, tinted by closeness:
+// rose for overdue/today/2 days out, butter for 3–4, grey beyond.
+function relChip(d) {
+  const days = daysUntil(d.date);
+  if (days < 0) return \`<span class="chip rel-rose">\${Math.abs(days)}d overdue</span>\`;
+  if (days === 0) return '<span class="chip rel-rose">Today</span>';
+  const label = days === 1 ? 'In 1 day' : \`In \${days} days\`;
+  const tint = days <= 2 ? 'rel-rose' : days <= 4 ? 'rel-butter' : 'rel-grey';
+  return \`<span class="chip \${tint}">\${label}</span>\`;
+}
 
 function renderToday() {
   const tasks = state.tasks || [];
@@ -1778,9 +2164,10 @@ function renderToday() {
   const waiting = tasks.filter((t) => t.status === 'waiting');
   const weekAgo = Date.now() - 7 * 86400000;
   const doneWeek = tasks.filter((t) => t.status === 'done' && new Date(t.updated_at).getTime() >= weekAgo);
-  // Priority order, shared by the attention list and Today's focus:
-  // overdue first, then tasks waiting on Jesutofunmi, then the rest —
-  // each group by due date ascending.
+  // Priority order for the attention list: overdue first, then tasks
+  // waiting on Jesutofunmi, then the rest — each group by due ascending.
+  // The first row is therefore the day's top item; there is no separate
+  // focus panel repeating it.
   const priorityGroup = (t) => (daysUntil(t.due) < 0 ? 0 : t.status === 'waiting' ? 1 : 2);
   const byPriority = (a, b) =>
     priorityGroup(a) - priorityGroup(b) || a.due.localeCompare(b.due);
@@ -1788,19 +2175,11 @@ function renderToday() {
     .filter((t) => t.due && daysUntil(t.due) <= 3)
     .sort(byPriority);
 
-  // Hero: eyebrow from the real date + a greeting matched to the time of day.
+  // Eyebrow: the real date (styled uppercase by CSS).
   const now = new Date();
-  const weekday = now.toLocaleDateString('en-GB', { weekday: 'long' });
-  const monthName = now.toLocaleDateString('en-GB', { month: 'long' });
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'short' });
+  const monthName = now.toLocaleDateString('en-US', { month: 'short' });
   $('#todayEyebrow').textContent = \`\${weekday}, \${monthName} \${now.getDate()}\`;
-  const hour = now.getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-  $('#heroTitle').innerHTML = \`\${greeting}, <em>Jesutofunmi.</em>\`;
-  $('#todayGreeting').textContent = hour < 12
-    ? 'A little clarity before the day begins.'
-    : hour < 18
-      ? 'A quiet look at where things stand.'
-      : 'A quiet look back at the day, and at what tomorrow asks.';
 
   renderWeekStrip();
 
@@ -1808,6 +2187,7 @@ function renderToday() {
   $('#statsRow').textContent =
     \`\${open.length} open · \${waiting.length} waiting on you · \${doneWeek.length} done this week\`;
 
+  // The Brief: the latest digest, white on deep green.
   const digest = state.latestDigest;
   if (digest) {
     $('#todayDigestTitle').textContent = digest.title;
@@ -1816,55 +2196,63 @@ function renderToday() {
   } else {
     $('#todayDigestTitle').textContent = 'No digest yet';
     $('#todayDigestMeta').textContent = '';
-    $('#todayDigestBody').innerHTML = '<p class="muted">The first digest will appear here.</p>';
+    $('#todayDigestBody').innerHTML = '<p class="muted">The first brief will appear here.</p>';
   }
 
-  // What deserves your attention: a numbered editorial list — its only home.
+  // What deserves your attention: tasks-style rows. Clicking opens the editor.
+  $('#attentionCount').textContent = dueNow.length ? String(dueNow.length) : '';
   $('#dueNowList').innerHTML = dueNow.length
-    ? dueNow.map((t, i) => \`
-        <div class="attention-item">
-          <span class="att-num">\${String(i + 1).padStart(2, '0')}</span>
-          <div class="grow"><a href="#" data-open-task="\${t.id}">\${esc(t.title)}</a></div>
-          \${ownerChip(t.owner)}\${dueChip(t)}
+    ? dueNow.map((t) => \`
+        <div class="attention-row" data-open-task="\${t.id}" role="button" tabindex="0">
+          <span class="att-circle" aria-hidden="true"></span>
+          <div class="grow">
+            <div class="att-title">\${esc(t.title)}</div>
+            <div class="att-meta"><span class="owner-dot owner-dot-\${esc(t.owner)}"></span><span>\${esc(t.owner)}\${t.status === 'waiting' ? ' · waiting on you' : ''}</span></div>
+          </div>
+          \${dueChip(t)}
         </div>\`).join('')
     : '<p class="muted">Nothing overdue, and nothing due in the next 72 hours.</p>';
 
-  // Today's focus: the same priority order as the attention list, so the
-  // focus is attention item 01 whenever that list is non-empty — the list
-  // flags it, this panel commits to it.
-  const focus = open
-    .filter((t) => t.due)
-    .sort(byPriority)[0];
-  $('#focusLine').innerHTML = focus
-    ? \`<div class="focus-line">
-        <div class="grow"><a href="#" data-open-task="\${focus.id}">\${esc(focus.title)}</a></div>
-        \${ownerChip(focus.owner)}\${dueChip(focus)}
-      </div>\`
-    : '<p class="muted">Nothing is pressing today.</p>';
-
-  // Upcoming deadlines: the callout at the top of Today. Overdue and
-  // today's deadlines come first — they are the ones that must not be
-  // missed — then the next ones out, four in all.
+  // Deadlines card: overdue and today's first, then the next ones out to
+  // 14 days, five at most. Clicking a row jumps to it in Deadlines.
   const byDate = [...(state.deadlines || [])].sort((a, b) => a.date.localeCompare(b.date));
-  const pressing = byDate.filter((d) => daysUntil(d.date) <= 0);
-  const ahead = byDate.filter((d) => daysUntil(d.date) > 0);
-  const called = [...pressing, ...ahead].slice(0, 4);
-  $('#upcomingList').innerHTML = called.length
-    ? called.map((d) => {
+  const shownDeadlines = byDate.filter((d) => daysUntil(d.date) <= 14).slice(0, 5);
+  $('#todayDeadlines').innerHTML = shownDeadlines.length
+    ? shownDeadlines.map((d) => {
         const dt = parseDay(d.date);
-        const days = daysUntil(d.date);
-        const cls = days < 0 ? ' overdue' : days === 0 ? ' today' : '';
+        const context = [d.owner, d.notes].filter(Boolean).join(' · ');
         return \`
-        <div class="upcoming-item\${cls}">
-          <div class="upcoming-date">
-            <span class="u-day">\${dt.getDate()}</span>
-            <span class="u-mon">\${dt.toLocaleDateString('en-US', { month: 'short' })}</span>
+        <div class="dl-row" data-goto-deadline="\${esc(d.date)}">
+          <div class="dl-date">
+            <span class="dl-mon">\${dt.toLocaleDateString('en-US', { month: 'short' })}</span>
+            <span class="dl-day">\${dt.getDate()}</span>
           </div>
-          <div class="grow upcoming-title">\${esc(d.title)}</div>
-          \${ownerChip(d.owner)}\${deadlineChip(d)}
+          <div class="grow">
+            <div class="dl-title">\${esc(d.title)}</div>
+            \${context ? \`<div class="dl-context">\${esc(context)}</div>\` : ''}
+          </div>
+          \${relChip(d)}
         </div>\`;
       }).join('')
-    : '<p class="muted">No deadlines coming up.</p>';
+    : '<p class="muted">No deadlines in the next 14 days.</p>';
+
+  // Under the week strip: whatever is dated today — deadlines due today
+  // first, then open tasks due today — as tinted blocks.
+  const t = todayStr();
+  const dlToday = (state.deadlines || []).filter((d) => d.date === t);
+  const tasksToday = open.filter((x) => x.due === t);
+  const tintCycle = ['tint-sage', 'tint-butter', 'tint-rose'];
+  const blocks = [
+    ...dlToday.map((d) => ({ title: d.title, sub: \`Deadline · \${d.owner}\` })),
+    ...tasksToday.map((x) => ({ title: x.title, sub: \`Task · \${x.owner}\` })),
+  ];
+  $('#todayItems').innerHTML = blocks.length
+    ? blocks.map((b, i) => \`
+        <div class="today-item \${tintCycle[i % tintCycle.length]}">
+          <div class="ti-title">\${esc(b.title)}</div>
+          <div class="ti-sub">\${esc(b.sub)}</div>
+        </div>\`).join('')
+    : '<p class="muted today-items-empty">Nothing dated today.</p>';
 
   $('#activityList').innerHTML = (state.activity || []).length
     ? state.activity.map((a) => \`
@@ -1874,6 +2262,69 @@ function renderToday() {
         </div>\`).join('')
     : '<p class="muted">No activity yet.</p>';
 }
+
+// Today deadlines-card rows jump to the date in the Deadlines view.
+$('#todayDeadlines').addEventListener('click', (e) => {
+  const row = e.target.closest('[data-goto-deadline]');
+  if (row) gotoDeadlineDate(row.dataset.gotoDeadline);
+});
+
+/* ================= calendar ================= */
+
+let calOffset = 0; // months away from the current month
+
+function renderCalendar() {
+  if (!state) return;
+  const base = new Date();
+  base.setDate(1);
+  base.setMonth(base.getMonth() + calOffset);
+  const year = base.getFullYear();
+  const month = base.getMonth();
+  $('#calTitle').textContent = base.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  const dlByDate = {};
+  (state.deadlines || []).forEach((d) => { (dlByDate[d.date] = dlByDate[d.date] || []).push(d); });
+  const taskByDate = {};
+  (state.tasks || [])
+    .filter((x) => x.due && x.status !== 'done')
+    .forEach((x) => { (taskByDate[x.due] = taskByDate[x.due] || []).push(x); });
+
+  const start = new Date(year, month, 1 - new Date(year, month, 1).getDay());
+  let html = '';
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    const iso = isoOf(d);
+    const inMonth = d.getMonth() === month;
+    const dls = dlByDate[iso] || [];
+    const tks = taskByDate[iso] || [];
+    const chips = dls.slice(0, 2)
+      .map((x) => \`<span class="cal-chip">\${esc(x.title)}</span>\`).join('') +
+      (dls.length > 2 ? \`<span class="cal-more">+\${dls.length - 2} more</span>\` : '');
+    const dots = tks.length
+      ? \`<span class="cal-dots">\${'<i></i>'.repeat(Math.min(3, tks.length))}</span>\`
+      : '';
+    const label = \`\${fmtDate(iso)}\${dls.length ? \` — \${dls.length} deadline\${dls.length > 1 ? 's' : ''}\` : ''}\`;
+    html += \`<div class="cal-cell\${inMonth ? '' : ' out'}\${iso === todayStr() ? ' is-today' : ''}\${dls.length ? ' has-deadline' : ''}"\${dls.length ? \` data-cal-date="\${iso}" role="button" tabindex="0" aria-label="\${esc(label)}" title="\${esc(label)}"\` : ''}>
+      <div class="cal-cell-top"><span class="cal-num">\${d.getDate()}</span>\${dots}</div>
+      \${chips ? \`<div class="cal-chips">\${chips}</div>\` : ''}
+    </div>\`;
+  }
+  $('#calGrid').innerHTML = html;
+}
+
+$('#calGrid').addEventListener('click', (e) => {
+  const cell = e.target.closest('[data-cal-date]');
+  if (cell) gotoDeadlineDate(cell.dataset.calDate);
+});
+$('#calGrid').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const cell = e.target.closest('[data-cal-date]');
+  if (cell) { e.preventDefault(); gotoDeadlineDate(cell.dataset.calDate); }
+});
+$('#calPrev').addEventListener('click', () => { calOffset -= 1; renderCalendar(); });
+$('#calNext').addEventListener('click', () => { calOffset += 1; renderCalendar(); });
+$('#calTodayBtn').addEventListener('click', () => { calOffset = 0; renderCalendar(); });
 
 /* ================= board ================= */
 
@@ -1956,9 +2407,17 @@ function col_bindDrag() {
 
 $('#ownerFilter').addEventListener('change', renderBoard);
 
-// "Due now" rows open the same editor.
+// Attention rows open the task editor (click, or Enter when focused).
 document.addEventListener('click', (e) => {
   const link = e.target.closest('[data-open-task]');
+  if (!link) return;
+  e.preventDefault();
+  const task = taskById(link.dataset.openTask);
+  if (task) openTaskEditor(task);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const link = e.target.closest && e.target.closest('[data-open-task]');
   if (!link) return;
   e.preventDefault();
   const task = taskById(link.dataset.openTask);
@@ -1991,6 +2450,7 @@ function openTaskEditor(task) {
 }
 
 $('#newTaskBtn').addEventListener('click', () => openTaskEditor(null));
+$('#newTaskBtnToday').addEventListener('click', () => openTaskEditor(null));
 
 $('#taskForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -2037,8 +2497,8 @@ function renderDeadlines() {
         return \`
         <div class="deadline-row \${daysUntil(d.date) < 0 ? 'past' : ''}" data-deadline-id="\${d.id}" data-date="\${esc(d.date)}">
           <div class="deadline-date">
-            <div class="d-day">\${dt.getDate()}</div>
-            <div class="d-mon">\${dt.toLocaleDateString('en-US', { month: 'short' })}</div>
+            <span class="d-mon">\${dt.toLocaleDateString('en-US', { month: 'short' })}</span>
+            <span class="d-day">\${dt.getDate()}</span>
           </div>
           <div class="deadline-main">
             <div class="deadline-title">\${esc(d.title)}</div>
@@ -2091,65 +2551,88 @@ $('#deadlineForm').addEventListener('submit', async (e) => {
   }
 });
 
-/* ================= digests ================= */
+/* ================= projects ================= */
 
-let selectedDigestId = null;
+const PROJECT_DOT_COLORS = ['#966a43', '#234d3b', '#c39a1d', '#7d8c6f', '#a34d3c', '#5b7a99'];
 
-async function showDigest(id) {
-  selectedDigestId = id;
-  document.querySelectorAll('.digest-item').forEach((el) => {
-    el.classList.toggle('selected', Number(el.dataset.digestId) === id);
-  });
-  let digest = state.latestDigest && state.latestDigest.id === id ? state.latestDigest : null;
-  if (!digest) {
-    try {
-      const res = await api(\`/api/digests/\${id}\`);
-      digest = res.digest;
-    } catch {
-      return;
-    }
-  }
-  if (!digest) return;
-  $('#digestViewTitle').textContent = digest.title;
-  $('#digestViewMeta').textContent = \`\${fmtDate(digest.date)} · by \${digest.created_by || 'Nayden'}\`;
-  $('#digestViewBody').innerHTML = renderMarkdown(digest.body);
+function projectStatusChip(status) {
+  const map = {
+    active: ['status-active', 'Active'],
+    paused: ['status-paused', 'Paused'],
+    done: ['status-done', 'Done'],
+  };
+  const [cls, label] = map[status] || map.active;
+  return \`<span class="chip \${cls}">\${label}</span>\`;
 }
 
-function renderDigests() {
-  const list = state.digests || [];
-  $('#digestList').innerHTML = list.length
-    ? list.map((d) => \`
-        <div class="digest-item" data-digest-id="\${d.id}">
-          <div class="d-title">\${esc(d.title)}</div>
-          <div class="d-meta">\${esc(d.date)} · by \${esc(d.created_by || 'Nayden')}</div>
-        </div>\`).join('')
-    : '<p class="muted">No digests yet.</p>';
-  document.querySelectorAll('.digest-item').forEach((el) => {
-    el.addEventListener('click', () => showDigest(Number(el.dataset.digestId)));
-  });
-  if (list.length) {
-    const keep = selectedDigestId && list.some((d) => d.id === selectedDigestId);
-    showDigest(keep ? selectedDigestId : list[0].id);
+function renderProjects() {
+  const projects = state.projects || [];
+
+  // Sidebar PROJECTS group: quiet dot-and-name rows, data-driven; the
+  // whole group hides when there are no projects.
+  const group = $('#projectNavGroup');
+  if (projects.length) {
+    group.classList.remove('hidden');
+    $('#projectNav').innerHTML = projects.map((p, i) => \`
+      <button type="button" class="project-nav-item" data-goto-projects>
+        <span class="project-dot" style="background:\${PROJECT_DOT_COLORS[i % PROJECT_DOT_COLORS.length]}"></span>
+        <span class="project-nav-name">\${esc(p.name)}</span>
+      </button>\`).join('');
+  } else {
+    group.classList.add('hidden');
+    $('#projectNav').innerHTML = '';
   }
+
+  // The Projects view: one paper card per project; clicking opens the editor.
+  $('#projectList').innerHTML = projects.length
+    ? projects.map((p) => \`
+        <article class="card project-card" data-project-id="\${p.id}">
+          <div class="project-card-head"><h3 class="project-name">\${esc(p.name)}</h3>\${projectStatusChip(p.status)}</div>
+          \${p.description ? \`<p class="project-desc">\${esc(p.description)}</p>\` : ''}
+        </article>\`).join('')
+    : '<p class="muted">No projects yet.</p>';
+
+  document.querySelectorAll('[data-project-id]').forEach((card) => {
+    card.addEventListener('click', () => {
+      const p = projects.find((x) => x.id === Number(card.dataset.projectId));
+      if (p) openProjectEditor(p);
+    });
+  });
 }
 
-$('#digestForm').addEventListener('submit', async (e) => {
+$('#projectNav').addEventListener('click', (e) => {
+  if (e.target.closest('[data-goto-projects]')) showView('projects');
+});
+
+function openProjectEditor(p) {
+  $('#projectFormTitle').textContent = p ? 'Edit project' : 'Add project';
+  $('#projectId').value = p ? p.id : '';
+  $('#projectName').value = p ? p.name : '';
+  $('#projectDescription').value = p ? p.description || '' : '';
+  $('#projectStatus').value = p ? p.status : 'active';
+  $('#projectError').textContent = '';
+  openModal('projectModal');
+}
+
+$('#newProjectBtn').addEventListener('click', () => openProjectEditor(null));
+
+$('#projectForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  $('#digestError').textContent = '';
+  $('#projectError').textContent = '';
+  const id = $('#projectId').value;
   const payload = {
-    title: $('#digestTitle').value.trim(),
-    body: $('#digestBody').value,
+    name: $('#projectName').value.trim(),
+    description: $('#projectDescription').value,
+    status: $('#projectStatus').value,
     actor,
   };
-  if ($('#digestDate').value) payload.date = $('#digestDate').value;
   try {
-    const res = await api('/api/digests', { method: 'POST', body: payload });
-    selectedDigestId = res.digest.id;
-    $('#digestTitle').value = '';
-    $('#digestBody').value = '';
+    if (id) await api(\`/api/projects/\${id}\`, { method: 'PATCH', body: payload });
+    else await api('/api/projects', { method: 'POST', body: payload });
+    closeModal('projectModal');
     await loadState();
   } catch (err) {
-    $('#digestError').textContent = err.message;
+    $('#projectError').textContent = err.message;
   }
 });
 
@@ -2173,7 +2656,7 @@ function renderReports() {
   for (let i = 0; i < 7; i++) {
     const d = parseDay(todayStr());
     d.setDate(d.getDate() - i);
-    days.push(\`\${d.getFullYear()}-\${String(d.getMonth() + 1).padStart(2, '0')}-\${String(d.getDate()).padStart(2, '0')}\`);
+    days.push(isoOf(d));
   }
   $('#reportDays').innerHTML = days.map((iso) => {
     const open = reportDayOpen(iso);
@@ -2262,10 +2745,11 @@ $('#reportForm').addEventListener('submit', async (e) => {
 function renderAll() {
   renderToday();
   renderBoard();
+  renderCalendar();
   renderDeadlines();
+  renderProjects();
   renderReports();
   refreshReportForm();
-  renderDigests();
 }
 
 (function init() {
@@ -2273,7 +2757,6 @@ function renderAll() {
   sel.value = actor;
   if (sel.value !== actor) { actor = 'Jesutofunmi'; sel.value = actor; }
   syncActorCard();
-  $('#digestDate').value = todayStr();
   $('#reportDate').value = todayStr();
   $('#reportAuthor').value = actor;
   loadState()
@@ -2293,8 +2776,10 @@ export default {
     if (path.startsWith('/api/')) {
       try {
         // Self-migration (the _middleware equivalent): create the reports
-        // table if it is missing. Idempotent and cheap; runs before handlers.
+        // and projects tables if they are missing. Idempotent and cheap;
+        // runs before handlers.
         await ensureReportsTable(env);
+        await ensureProjectsTable(env);
         if (path === '/api/auth') {
           if (request.method !== 'POST') return err('Method not allowed.', 405);
           return await hAuthPost({ request, env });
@@ -2311,6 +2796,8 @@ export default {
         if (path === '/api/deadlines' && request.method === 'POST') return await hDeadlinesPost({ request, env });
         if ((m = path.match(/^\/api\/deadlines\/(\d+)$/)) && request.method === 'PATCH') return await hDeadlinePatch({ request, env, params: { id: m[1] } });
         if (path === '/api/reports' && request.method === 'POST') return await hReportsPost({ request, env });
+        if (path === '/api/projects' && request.method === 'POST') return await hProjectsPost({ request, env });
+        if ((m = path.match(/^\/api\/projects\/(\d+)$/)) && request.method === 'PATCH') return await hProjectPatch({ request, env, params: { id: m[1] } });
         if (path === '/api/logout' && request.method === 'POST') return await hLogoutPost({ request, env });
         return err('Not found.', 404);
       } catch (e) {

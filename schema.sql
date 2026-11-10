@@ -43,11 +43,21 @@ CREATE TABLE IF NOT EXISTS reports (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS projects (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'active',     -- active | paused | done
+  created_by  TEXT DEFAULT '',
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS activity (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id    INTEGER,                             -- NULL for digest/deadline events
   actor      TEXT NOT NULL,
-  action     TEXT NOT NULL,                       -- created | status_changed | updated | digest_posted | deadline_added | deadline_updated
+  action     TEXT NOT NULL,                       -- created | status_changed | updated | digest_posted | deadline_added | deadline_updated | report_posted | project_added | project_updated
   note       TEXT DEFAULT '',
   created_at TEXT NOT NULL
 );

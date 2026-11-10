@@ -228,9 +228,11 @@ const ACTION_LABELS = {
   deadline_added: 'added a deadline',
   deadline_updated: 'updated a deadline',
   report_posted: 'posted a daily report',
+  project_added: 'added a project',
+  project_updated: 'updated a project',
 };
 
-/* ---------- week calendar (Today rail) ----------
+/* ---------- week calendar (This week card) ----------
    One Sunday–Saturday week at a time; weekOffset moves it with the
    chevrons. Days are real buttons: a click jumps to that date in the
    Deadlines view, flashing its rows — or landing on the nearest
@@ -291,6 +293,18 @@ $('#weekStrip').addEventListener('click', (e) => {
 });
 $('#weekPrev').addEventListener('click', () => { weekOffset -= 1; renderWeekStrip(); });
 $('#weekNext').addEventListener('click', () => { weekOffset += 1; renderWeekStrip(); });
+$('#deadlinesMore').addEventListener('click', () => showView('deadlines'));
+
+// Relative chip for the Today deadlines card, tinted by closeness:
+// rose for overdue/today/2 days out, butter for 3–4, grey beyond.
+function relChip(d) {
+  const days = daysUntil(d.date);
+  if (days < 0) return `<span class="chip rel-rose">${Math.abs(days)}d overdue</span>`;
+  if (days === 0) return '<span class="chip rel-rose">Today</span>';
+  const label = days === 1 ? 'In 1 day' : `In ${days} days`;
+  const tint = days <= 2 ? 'rel-rose' : days <= 4 ? 'rel-butter' : 'rel-grey';
+  return `<span class="chip ${tint}">${label}</span>`;
+}
 
 function renderToday() {
   const tasks = state.tasks || [];
@@ -298,9 +312,10 @@ function renderToday() {
   const waiting = tasks.filter((t) => t.status === 'waiting');
   const weekAgo = Date.now() - 7 * 86400000;
   const doneWeek = tasks.filter((t) => t.status === 'done' && new Date(t.updated_at).getTime() >= weekAgo);
-  // Priority order, shared by the attention list and Today's focus:
-  // overdue first, then tasks waiting on Jesutofunmi, then the rest —
-  // each group by due date ascending.
+  // Priority order for the attention list: overdue first, then tasks
+  // waiting on Jesutofunmi, then the rest — each group by due ascending.
+  // The first row is therefore the day's top item; there is no separate
+  // focus panel repeating it.
   const priorityGroup = (t) => (daysUntil(t.due) < 0 ? 0 : t.status === 'waiting' ? 1 : 2);
   const byPriority = (a, b) =>
     priorityGroup(a) - priorityGroup(b) || a.due.localeCompare(b.due);
@@ -308,19 +323,11 @@ function renderToday() {
     .filter((t) => t.due && daysUntil(t.due) <= 3)
     .sort(byPriority);
 
-  // Hero: eyebrow from the real date + a greeting matched to the time of day.
+  // Eyebrow: the real date (styled uppercase by CSS).
   const now = new Date();
-  const weekday = now.toLocaleDateString('en-GB', { weekday: 'long' });
-  const monthName = now.toLocaleDateString('en-GB', { month: 'long' });
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'short' });
+  const monthName = now.toLocaleDateString('en-US', { month: 'short' });
   $('#todayEyebrow').textContent = `${weekday}, ${monthName} ${now.getDate()}`;
-  const hour = now.getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-  $('#heroTitle').innerHTML = `${greeting}, <em>Jesutofunmi.</em>`;
-  $('#todayGreeting').textContent = hour < 12
-    ? 'A little clarity before the day begins.'
-    : hour < 18
-      ? 'A quiet look at where things stand.'
-      : 'A quiet look back at the day, and at what tomorrow asks.';
 
   renderWeekStrip();
 
@@ -328,6 +335,7 @@ function renderToday() {
   $('#statsRow').textContent =
     `${open.length} open · ${waiting.length} waiting on you · ${doneWeek.length} done this week`;
 
+  // The Brief: the latest digest, white on deep green.
   const digest = state.latestDigest;
   if (digest) {
     $('#todayDigestTitle').textContent = digest.title;
@@ -336,55 +344,63 @@ function renderToday() {
   } else {
     $('#todayDigestTitle').textContent = 'No digest yet';
     $('#todayDigestMeta').textContent = '';
-    $('#todayDigestBody').innerHTML = '<p class="muted">The first digest will appear here.</p>';
+    $('#todayDigestBody').innerHTML = '<p class="muted">The first brief will appear here.</p>';
   }
 
-  // What deserves your attention: a numbered editorial list — its only home.
+  // What deserves your attention: tasks-style rows. Clicking opens the editor.
+  $('#attentionCount').textContent = dueNow.length ? String(dueNow.length) : '';
   $('#dueNowList').innerHTML = dueNow.length
-    ? dueNow.map((t, i) => `
-        <div class="attention-item">
-          <span class="att-num">${String(i + 1).padStart(2, '0')}</span>
-          <div class="grow"><a href="#" data-open-task="${t.id}">${esc(t.title)}</a></div>
-          ${ownerChip(t.owner)}${dueChip(t)}
+    ? dueNow.map((t) => `
+        <div class="attention-row" data-open-task="${t.id}" role="button" tabindex="0">
+          <span class="att-circle" aria-hidden="true"></span>
+          <div class="grow">
+            <div class="att-title">${esc(t.title)}</div>
+            <div class="att-meta"><span class="owner-dot owner-dot-${esc(t.owner)}"></span><span>${esc(t.owner)}${t.status === 'waiting' ? ' · waiting on you' : ''}</span></div>
+          </div>
+          ${dueChip(t)}
         </div>`).join('')
     : '<p class="muted">Nothing overdue, and nothing due in the next 72 hours.</p>';
 
-  // Today's focus: the same priority order as the attention list, so the
-  // focus is attention item 01 whenever that list is non-empty — the list
-  // flags it, this panel commits to it.
-  const focus = open
-    .filter((t) => t.due)
-    .sort(byPriority)[0];
-  $('#focusLine').innerHTML = focus
-    ? `<div class="focus-line">
-        <div class="grow"><a href="#" data-open-task="${focus.id}">${esc(focus.title)}</a></div>
-        ${ownerChip(focus.owner)}${dueChip(focus)}
-      </div>`
-    : '<p class="muted">Nothing is pressing today.</p>';
-
-  // Upcoming deadlines: the callout at the top of Today. Overdue and
-  // today's deadlines come first — they are the ones that must not be
-  // missed — then the next ones out, four in all.
+  // Deadlines card: overdue and today's first, then the next ones out to
+  // 14 days, five at most. Clicking a row jumps to it in Deadlines.
   const byDate = [...(state.deadlines || [])].sort((a, b) => a.date.localeCompare(b.date));
-  const pressing = byDate.filter((d) => daysUntil(d.date) <= 0);
-  const ahead = byDate.filter((d) => daysUntil(d.date) > 0);
-  const called = [...pressing, ...ahead].slice(0, 4);
-  $('#upcomingList').innerHTML = called.length
-    ? called.map((d) => {
+  const shownDeadlines = byDate.filter((d) => daysUntil(d.date) <= 14).slice(0, 5);
+  $('#todayDeadlines').innerHTML = shownDeadlines.length
+    ? shownDeadlines.map((d) => {
         const dt = parseDay(d.date);
-        const days = daysUntil(d.date);
-        const cls = days < 0 ? ' overdue' : days === 0 ? ' today' : '';
+        const context = [d.owner, d.notes].filter(Boolean).join(' · ');
         return `
-        <div class="upcoming-item${cls}">
-          <div class="upcoming-date">
-            <span class="u-day">${dt.getDate()}</span>
-            <span class="u-mon">${dt.toLocaleDateString('en-US', { month: 'short' })}</span>
+        <div class="dl-row" data-goto-deadline="${esc(d.date)}">
+          <div class="dl-date">
+            <span class="dl-mon">${dt.toLocaleDateString('en-US', { month: 'short' })}</span>
+            <span class="dl-day">${dt.getDate()}</span>
           </div>
-          <div class="grow upcoming-title">${esc(d.title)}</div>
-          ${ownerChip(d.owner)}${deadlineChip(d)}
+          <div class="grow">
+            <div class="dl-title">${esc(d.title)}</div>
+            ${context ? `<div class="dl-context">${esc(context)}</div>` : ''}
+          </div>
+          ${relChip(d)}
         </div>`;
       }).join('')
-    : '<p class="muted">No deadlines coming up.</p>';
+    : '<p class="muted">No deadlines in the next 14 days.</p>';
+
+  // Under the week strip: whatever is dated today — deadlines due today
+  // first, then open tasks due today — as tinted blocks.
+  const t = todayStr();
+  const dlToday = (state.deadlines || []).filter((d) => d.date === t);
+  const tasksToday = open.filter((x) => x.due === t);
+  const tintCycle = ['tint-sage', 'tint-butter', 'tint-rose'];
+  const blocks = [
+    ...dlToday.map((d) => ({ title: d.title, sub: `Deadline · ${d.owner}` })),
+    ...tasksToday.map((x) => ({ title: x.title, sub: `Task · ${x.owner}` })),
+  ];
+  $('#todayItems').innerHTML = blocks.length
+    ? blocks.map((b, i) => `
+        <div class="today-item ${tintCycle[i % tintCycle.length]}">
+          <div class="ti-title">${esc(b.title)}</div>
+          <div class="ti-sub">${esc(b.sub)}</div>
+        </div>`).join('')
+    : '<p class="muted today-items-empty">Nothing dated today.</p>';
 
   $('#activityList').innerHTML = (state.activity || []).length
     ? state.activity.map((a) => `
@@ -394,6 +410,69 @@ function renderToday() {
         </div>`).join('')
     : '<p class="muted">No activity yet.</p>';
 }
+
+// Today deadlines-card rows jump to the date in the Deadlines view.
+$('#todayDeadlines').addEventListener('click', (e) => {
+  const row = e.target.closest('[data-goto-deadline]');
+  if (row) gotoDeadlineDate(row.dataset.gotoDeadline);
+});
+
+/* ================= calendar ================= */
+
+let calOffset = 0; // months away from the current month
+
+function renderCalendar() {
+  if (!state) return;
+  const base = new Date();
+  base.setDate(1);
+  base.setMonth(base.getMonth() + calOffset);
+  const year = base.getFullYear();
+  const month = base.getMonth();
+  $('#calTitle').textContent = base.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  const dlByDate = {};
+  (state.deadlines || []).forEach((d) => { (dlByDate[d.date] = dlByDate[d.date] || []).push(d); });
+  const taskByDate = {};
+  (state.tasks || [])
+    .filter((x) => x.due && x.status !== 'done')
+    .forEach((x) => { (taskByDate[x.due] = taskByDate[x.due] || []).push(x); });
+
+  const start = new Date(year, month, 1 - new Date(year, month, 1).getDay());
+  let html = '';
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    const iso = isoOf(d);
+    const inMonth = d.getMonth() === month;
+    const dls = dlByDate[iso] || [];
+    const tks = taskByDate[iso] || [];
+    const chips = dls.slice(0, 2)
+      .map((x) => `<span class="cal-chip">${esc(x.title)}</span>`).join('') +
+      (dls.length > 2 ? `<span class="cal-more">+${dls.length - 2} more</span>` : '');
+    const dots = tks.length
+      ? `<span class="cal-dots">${'<i></i>'.repeat(Math.min(3, tks.length))}</span>`
+      : '';
+    const label = `${fmtDate(iso)}${dls.length ? ` — ${dls.length} deadline${dls.length > 1 ? 's' : ''}` : ''}`;
+    html += `<div class="cal-cell${inMonth ? '' : ' out'}${iso === todayStr() ? ' is-today' : ''}${dls.length ? ' has-deadline' : ''}"${dls.length ? ` data-cal-date="${iso}" role="button" tabindex="0" aria-label="${esc(label)}" title="${esc(label)}"` : ''}>
+      <div class="cal-cell-top"><span class="cal-num">${d.getDate()}</span>${dots}</div>
+      ${chips ? `<div class="cal-chips">${chips}</div>` : ''}
+    </div>`;
+  }
+  $('#calGrid').innerHTML = html;
+}
+
+$('#calGrid').addEventListener('click', (e) => {
+  const cell = e.target.closest('[data-cal-date]');
+  if (cell) gotoDeadlineDate(cell.dataset.calDate);
+});
+$('#calGrid').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const cell = e.target.closest('[data-cal-date]');
+  if (cell) { e.preventDefault(); gotoDeadlineDate(cell.dataset.calDate); }
+});
+$('#calPrev').addEventListener('click', () => { calOffset -= 1; renderCalendar(); });
+$('#calNext').addEventListener('click', () => { calOffset += 1; renderCalendar(); });
+$('#calTodayBtn').addEventListener('click', () => { calOffset = 0; renderCalendar(); });
 
 /* ================= board ================= */
 
@@ -476,9 +555,17 @@ function col_bindDrag() {
 
 $('#ownerFilter').addEventListener('change', renderBoard);
 
-// "Due now" rows open the same editor.
+// Attention rows open the task editor (click, or Enter when focused).
 document.addEventListener('click', (e) => {
   const link = e.target.closest('[data-open-task]');
+  if (!link) return;
+  e.preventDefault();
+  const task = taskById(link.dataset.openTask);
+  if (task) openTaskEditor(task);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const link = e.target.closest && e.target.closest('[data-open-task]');
   if (!link) return;
   e.preventDefault();
   const task = taskById(link.dataset.openTask);
@@ -511,6 +598,7 @@ function openTaskEditor(task) {
 }
 
 $('#newTaskBtn').addEventListener('click', () => openTaskEditor(null));
+$('#newTaskBtnToday').addEventListener('click', () => openTaskEditor(null));
 
 $('#taskForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -557,8 +645,8 @@ function renderDeadlines() {
         return `
         <div class="deadline-row ${daysUntil(d.date) < 0 ? 'past' : ''}" data-deadline-id="${d.id}" data-date="${esc(d.date)}">
           <div class="deadline-date">
-            <div class="d-day">${dt.getDate()}</div>
-            <div class="d-mon">${dt.toLocaleDateString('en-US', { month: 'short' })}</div>
+            <span class="d-mon">${dt.toLocaleDateString('en-US', { month: 'short' })}</span>
+            <span class="d-day">${dt.getDate()}</span>
           </div>
           <div class="deadline-main">
             <div class="deadline-title">${esc(d.title)}</div>
@@ -611,65 +699,88 @@ $('#deadlineForm').addEventListener('submit', async (e) => {
   }
 });
 
-/* ================= digests ================= */
+/* ================= projects ================= */
 
-let selectedDigestId = null;
+const PROJECT_DOT_COLORS = ['#966a43', '#234d3b', '#c39a1d', '#7d8c6f', '#a34d3c', '#5b7a99'];
 
-async function showDigest(id) {
-  selectedDigestId = id;
-  document.querySelectorAll('.digest-item').forEach((el) => {
-    el.classList.toggle('selected', Number(el.dataset.digestId) === id);
-  });
-  let digest = state.latestDigest && state.latestDigest.id === id ? state.latestDigest : null;
-  if (!digest) {
-    try {
-      const res = await api(`/api/digests/${id}`);
-      digest = res.digest;
-    } catch {
-      return;
-    }
-  }
-  if (!digest) return;
-  $('#digestViewTitle').textContent = digest.title;
-  $('#digestViewMeta').textContent = `${fmtDate(digest.date)} · by ${digest.created_by || 'Nayden'}`;
-  $('#digestViewBody').innerHTML = renderMarkdown(digest.body);
+function projectStatusChip(status) {
+  const map = {
+    active: ['status-active', 'Active'],
+    paused: ['status-paused', 'Paused'],
+    done: ['status-done', 'Done'],
+  };
+  const [cls, label] = map[status] || map.active;
+  return `<span class="chip ${cls}">${label}</span>`;
 }
 
-function renderDigests() {
-  const list = state.digests || [];
-  $('#digestList').innerHTML = list.length
-    ? list.map((d) => `
-        <div class="digest-item" data-digest-id="${d.id}">
-          <div class="d-title">${esc(d.title)}</div>
-          <div class="d-meta">${esc(d.date)} · by ${esc(d.created_by || 'Nayden')}</div>
-        </div>`).join('')
-    : '<p class="muted">No digests yet.</p>';
-  document.querySelectorAll('.digest-item').forEach((el) => {
-    el.addEventListener('click', () => showDigest(Number(el.dataset.digestId)));
-  });
-  if (list.length) {
-    const keep = selectedDigestId && list.some((d) => d.id === selectedDigestId);
-    showDigest(keep ? selectedDigestId : list[0].id);
+function renderProjects() {
+  const projects = state.projects || [];
+
+  // Sidebar PROJECTS group: quiet dot-and-name rows, data-driven; the
+  // whole group hides when there are no projects.
+  const group = $('#projectNavGroup');
+  if (projects.length) {
+    group.classList.remove('hidden');
+    $('#projectNav').innerHTML = projects.map((p, i) => `
+      <button type="button" class="project-nav-item" data-goto-projects>
+        <span class="project-dot" style="background:${PROJECT_DOT_COLORS[i % PROJECT_DOT_COLORS.length]}"></span>
+        <span class="project-nav-name">${esc(p.name)}</span>
+      </button>`).join('');
+  } else {
+    group.classList.add('hidden');
+    $('#projectNav').innerHTML = '';
   }
+
+  // The Projects view: one paper card per project; clicking opens the editor.
+  $('#projectList').innerHTML = projects.length
+    ? projects.map((p) => `
+        <article class="card project-card" data-project-id="${p.id}">
+          <div class="project-card-head"><h3 class="project-name">${esc(p.name)}</h3>${projectStatusChip(p.status)}</div>
+          ${p.description ? `<p class="project-desc">${esc(p.description)}</p>` : ''}
+        </article>`).join('')
+    : '<p class="muted">No projects yet.</p>';
+
+  document.querySelectorAll('[data-project-id]').forEach((card) => {
+    card.addEventListener('click', () => {
+      const p = projects.find((x) => x.id === Number(card.dataset.projectId));
+      if (p) openProjectEditor(p);
+    });
+  });
 }
 
-$('#digestForm').addEventListener('submit', async (e) => {
+$('#projectNav').addEventListener('click', (e) => {
+  if (e.target.closest('[data-goto-projects]')) showView('projects');
+});
+
+function openProjectEditor(p) {
+  $('#projectFormTitle').textContent = p ? 'Edit project' : 'Add project';
+  $('#projectId').value = p ? p.id : '';
+  $('#projectName').value = p ? p.name : '';
+  $('#projectDescription').value = p ? p.description || '' : '';
+  $('#projectStatus').value = p ? p.status : 'active';
+  $('#projectError').textContent = '';
+  openModal('projectModal');
+}
+
+$('#newProjectBtn').addEventListener('click', () => openProjectEditor(null));
+
+$('#projectForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  $('#digestError').textContent = '';
+  $('#projectError').textContent = '';
+  const id = $('#projectId').value;
   const payload = {
-    title: $('#digestTitle').value.trim(),
-    body: $('#digestBody').value,
+    name: $('#projectName').value.trim(),
+    description: $('#projectDescription').value,
+    status: $('#projectStatus').value,
     actor,
   };
-  if ($('#digestDate').value) payload.date = $('#digestDate').value;
   try {
-    const res = await api('/api/digests', { method: 'POST', body: payload });
-    selectedDigestId = res.digest.id;
-    $('#digestTitle').value = '';
-    $('#digestBody').value = '';
+    if (id) await api(`/api/projects/${id}`, { method: 'PATCH', body: payload });
+    else await api('/api/projects', { method: 'POST', body: payload });
+    closeModal('projectModal');
     await loadState();
   } catch (err) {
-    $('#digestError').textContent = err.message;
+    $('#projectError').textContent = err.message;
   }
 });
 
@@ -693,7 +804,7 @@ function renderReports() {
   for (let i = 0; i < 7; i++) {
     const d = parseDay(todayStr());
     d.setDate(d.getDate() - i);
-    days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    days.push(isoOf(d));
   }
   $('#reportDays').innerHTML = days.map((iso) => {
     const open = reportDayOpen(iso);
@@ -782,10 +893,11 @@ $('#reportForm').addEventListener('submit', async (e) => {
 function renderAll() {
   renderToday();
   renderBoard();
+  renderCalendar();
   renderDeadlines();
+  renderProjects();
   renderReports();
   refreshReportForm();
-  renderDigests();
 }
 
 (function init() {
@@ -793,7 +905,6 @@ function renderAll() {
   sel.value = actor;
   if (sel.value !== actor) { actor = 'Jesutofunmi'; sel.value = actor; }
   syncActorCard();
-  $('#digestDate').value = todayStr();
   $('#reportDate').value = todayStr();
   $('#reportAuthor').value = actor;
   loadState()

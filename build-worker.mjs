@@ -26,6 +26,8 @@ const handlers = [
   ['./functions/api/deadlines.js', 'onRequestPost', 'hDeadlinesPost'],
   ['./functions/api/deadlines/[id].js', 'onRequestPatch', 'hDeadlinePatch'],
   ['./functions/api/reports.js', 'onRequestPost', 'hReportsPost'],
+  ['./functions/api/projects.js', 'onRequestPost', 'hProjectsPost'],
+  ['./functions/api/projects/[id].js', 'onRequestPatch', 'hProjectPatch'],
 ];
 
 let handlerCode = '';
@@ -62,8 +64,10 @@ export default {
     if (path.startsWith('/api/')) {
       try {
         // Self-migration (the _middleware equivalent): create the reports
-        // table if it is missing. Idempotent and cheap; runs before handlers.
+        // and projects tables if they are missing. Idempotent and cheap;
+        // runs before handlers.
         await ensureReportsTable(env);
+        await ensureProjectsTable(env);
         if (path === '/api/auth') {
           if (request.method !== 'POST') return err('Method not allowed.', 405);
           return await hAuthPost({ request, env });
@@ -80,6 +84,8 @@ export default {
         if (path === '/api/deadlines' && request.method === 'POST') return await hDeadlinesPost({ request, env });
         if ((m = path.match(/^\\/api\\/deadlines\\/(\\d+)$/)) && request.method === 'PATCH') return await hDeadlinePatch({ request, env, params: { id: m[1] } });
         if (path === '/api/reports' && request.method === 'POST') return await hReportsPost({ request, env });
+        if (path === '/api/projects' && request.method === 'POST') return await hProjectsPost({ request, env });
+        if ((m = path.match(/^\\/api\\/projects\\/(\\d+)$/)) && request.method === 'PATCH') return await hProjectPatch({ request, env, params: { id: m[1] } });
         if (path === '/api/logout' && request.method === 'POST') return await hLogoutPost({ request, env });
         return err('Not found.', 404);
       } catch (e) {

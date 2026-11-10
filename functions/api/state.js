@@ -1,11 +1,12 @@
 // GET /api/state — everything the SPA needs in one call:
 // open tasks + latest 50 done, latest digest in full, digest index,
-// deadlines sorted by date, latest 30 activity rows, and every daily
-// report from the last 7 days.
-import { ensureReportsTable, json } from './_shared.js';
+// deadlines sorted by date, latest 30 activity rows, every daily
+// report from the last 7 days, and all projects.
+import { ensureProjectsTable, ensureReportsTable, json } from './_shared.js';
 
 export async function onRequestGet({ env }) {
   await ensureReportsTable(env);
+  await ensureProjectsTable(env);
 
   const open = await env.DB.prepare(
     `SELECT * FROM tasks WHERE status != 'done'
@@ -42,6 +43,13 @@ export async function onRequestGet({ env }) {
     .bind(weekStart)
     .all();
 
+  // Projects: active first, then paused, then done; oldest first within a
+  // group, so the sidebar group keeps its seeded order.
+  const projects = await env.DB.prepare(
+    `SELECT * FROM projects
+     ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, id ASC`
+  ).all();
+
   return json({
     tasks: [...(open.results || []), ...(done.results || [])],
     latestDigest: latestDigest || null,
@@ -49,5 +57,6 @@ export async function onRequestGet({ env }) {
     deadlines: deadlines.results || [],
     activity: activity.results || [],
     reports: reports.results || [],
+    projects: projects.results || [],
   });
 }
