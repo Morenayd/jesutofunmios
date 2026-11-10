@@ -336,6 +336,7 @@ function renderToday() {
     : '<p class="muted">No deadlines in the next 14 days.</p>';
 
   renderSchedule();
+  renderWeekStrip();
 }
 
 /* ---------- schedule card ----------
@@ -413,6 +414,67 @@ function renderSchedule() {
         </div>`).join('')
     : '<p class="muted">Nothing scheduled today.</p>';
 }
+
+/* ---------- week strip (Today rail) ----------
+   The current week, Monday to Sunday, in a card under the Deadlines
+   card. Selecting a day renders its detail inside the same card, under
+   the strip — the strip never navigates anywhere. */
+
+let weekSelected = null; // iso of the day whose detail shows under the strip
+
+function renderWeekStrip() {
+  if (!state) return;
+  const today = todayStr();
+  // Monday of the current week.
+  const monday = parseDay(today);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  const mondayIso = isoOf(monday);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const sundayIso = isoOf(sunday);
+  // Keep the selection while it sits in this week; otherwise fall back
+  // to today, so the detail under the strip never goes stale.
+  if (!weekSelected || weekSelected < mondayIso || weekSelected > sundayIso) {
+    weekSelected = today;
+  }
+  const letters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  let html = '';
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const iso = isoOf(d);
+    const dlCount = (state.deadlines || []).filter((x) => x.date === iso).length;
+    const tkCount = (state.tasks || []).filter((x) => x.due === iso && x.status !== 'done').length;
+    const label = `${fmtDate(iso)}${dlCount ? ` — ${dlCount} deadline${dlCount > 1 ? 's' : ''}` : ''}${tkCount ? ` — ${tkCount} open task${tkCount > 1 ? 's' : ''} due` : ''}`;
+    html += `<button type="button" class="week-day${iso === today ? ' is-today' : ''}${iso === weekSelected ? ' selected' : ''}" data-week-date="${iso}" aria-label="${esc(label)}" title="${esc(label)}"><span class="week-letter">${letters[i]}</span><span class="week-num">${d.getDate()}</span><span class="week-dot${dlCount || tkCount ? '' : ' empty'}" aria-hidden="true"></span></button>`;
+  }
+  $('#weekStrip').innerHTML = html;
+  renderWeekDayDetail();
+}
+
+function renderWeekDayDetail() {
+  const iso = weekSelected || todayStr();
+  $('#weekDayTitle').textContent = parseDay(iso).toLocaleDateString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric',
+  });
+  $('#weekDayItems').innerHTML = dayItemsHtml(iso);
+}
+
+// Selection updates classes in place rather than re-rendering the
+// strip, so keyboard focus is never lost. Buttons fire click on
+// Enter/Space natively, so this one handler covers keyboard too.
+function selectWeekDay(iso) {
+  weekSelected = iso;
+  document.querySelectorAll('#weekStrip .week-day').forEach((c) => {
+    c.classList.toggle('selected', c.dataset.weekDate === iso);
+  });
+  renderWeekDayDetail();
+}
+
+$('#weekStrip').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-week-date]');
+  if (btn) selectWeekDay(btn.dataset.weekDate);
+});
 
 /* ================= monthly target ================= */
 
@@ -656,13 +718,11 @@ function renderCalendar() {
   renderCalDayDetail();
 }
 
-// The selected day's deadlines and open tasks, rendered in place under
-// the grid. Task rows reuse the shared [data-open-task] editor handler.
-function renderCalDayDetail() {
-  const iso = calSelected || todayStr();
-  $('#calDayTitle').textContent = parseDay(iso).toLocaleDateString('en-US', {
-    weekday: 'long', month: 'long', day: 'numeric',
-  });
+// Rows for one day's detail panel — deadlines first, then open tasks
+// due that day. Shared by the Calendar view and Today's week strip.
+// Task rows carry [data-open-task], so the shared editor handler opens
+// them in place.
+function dayItemsHtml(iso) {
   const dls = (state.deadlines || []).filter((d) => d.date === iso);
   const tks = (state.tasks || []).filter((t) => t.due === iso && t.status !== 'done');
   const rows = [
@@ -680,7 +740,17 @@ function renderCalDayDetail() {
         ${ownerChip(t.owner)}${dueChip(t)}
       </div>`),
   ];
-  $('#calDayItems').innerHTML = rows.length ? rows.join('') : '<p class="muted">Nothing on this day.</p>';
+  return rows.length ? rows.join('') : '<p class="muted">Nothing on this day.</p>';
+}
+
+// The selected day's deadlines and open tasks, rendered in place under
+// the grid. Task rows reuse the shared [data-open-task] editor handler.
+function renderCalDayDetail() {
+  const iso = calSelected || todayStr();
+  $('#calDayTitle').textContent = parseDay(iso).toLocaleDateString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric',
+  });
+  $('#calDayItems').innerHTML = dayItemsHtml(iso);
 }
 
 function selectCalDay(iso) {
