@@ -806,7 +806,22 @@ main {
 #todayDigestTitle, #digestViewTitle { font-family: var(--serif); font-size: 1.32rem; font-weight: 600; line-height: 1.25; }
 
 /* ---------- week strip ---------- */
-.week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.3rem; margin-bottom: 0.7rem; }
+.week-nav { display: flex; align-items: center; gap: 0.15rem; }
+.week { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.3rem; }
+.week-nav-btn {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  padding: 0.35rem 0.4rem;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.week-nav-btn:hover { background: var(--sage-soft); color: var(--green); }
+.week-nav-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .week-day {
   position: relative;
   display: flex;
@@ -814,12 +829,20 @@ main {
   align-items: center;
   gap: 0.1rem;
   padding: 0.55rem 0 0.95rem;
+  border: none;
+  background: none;
+  font: inherit;
   border-radius: 10px;
   color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
+.week-day:hover { background: var(--sage-soft); }
+.week-day:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .week-letter { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em; color: var(--muted); }
 .week-num { font-size: 1rem; font-weight: 600; line-height: 1.15; color: var(--ink); }
 .week-day.today { background: var(--green); }
+.week-day.today:hover { background: var(--deep); }
 .week-day.today .week-letter { color: rgba(248, 247, 242, 0.72); }
 .week-day.today .week-num { color: var(--ivory); }
 .week-dot {
@@ -922,16 +945,23 @@ main {
 .focus-line a { color: var(--ink); font-weight: 600; text-decoration: none; }
 .focus-line a:hover { color: var(--green); text-decoration: underline; }
 
-.horizon-item {
+/* ---------- upcoming deadlines callout (Today) ---------- */
+.deadlines-callout { background: var(--sage-soft); border: 1px solid #dde5d4; }
+.callout-title { font-family: var(--serif); font-size: 1.32rem; font-weight: 600; color: var(--deep); }
+.upcoming-item {
   display: flex;
   gap: 0.9rem;
-  align-items: baseline;
-  padding: 0.55rem 0;
-  border-bottom: 1px solid var(--line-soft);
-  font-size: 0.92rem;
+  align-items: center;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid #dde5d4;
+  font-size: 0.94rem;
 }
-.horizon-item:last-child { border-bottom: none; }
-.h-date { color: var(--muted); font-size: 0.82rem; font-weight: 600; min-width: 62px; }
+.upcoming-item:last-child { border-bottom: none; }
+.upcoming-date { display: flex; align-items: baseline; gap: 0.35rem; min-width: 76px; }
+.u-day { font-family: var(--serif); font-size: 1.45rem; font-weight: 600; line-height: 1; color: var(--caramel); }
+.u-mon { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); }
+.upcoming-item.today .u-day, .upcoming-item.overdue .u-day { color: var(--red); }
+.upcoming-title { font-weight: 550; }
 
 .activity-item {
   display: flex;
@@ -960,6 +990,12 @@ main {
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
 .deadline-row:hover { box-shadow: var(--shadow-lift); border-color: #d6d6c2; }
+/* Arriving from a calendar-day click: the row glows sage, then settles. */
+@keyframes rowFlash {
+  0%, 55% { background: var(--sage); border-color: var(--green); }
+  100% { background: var(--paper); border-color: var(--line); }
+}
+.deadline-row.flash { animation: rowFlash 2.4s ease-out forwards; }
 .deadline-date { text-align: center; min-width: 58px; }
 .deadline-date .d-day { font-family: var(--serif); font-size: 1.7rem; font-weight: 600; line-height: 1.05; }
 .deadline-date .d-mon { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); }
@@ -1174,6 +1210,13 @@ main {
 
       <div class="today-grid">
       <div class="today-main">
+        <div class="card deadlines-callout">
+          <div class="card-head">
+            <h2 class="callout-title">Upcoming deadlines</h2>
+          </div>
+          <div id="upcomingList"></div>
+        </div>
+
         <div class="card digest-card">
           <div class="card-head">
             <div>
@@ -1202,9 +1245,12 @@ main {
       <aside class="today-rail">
         <p class="counts-line" id="statsRow"></p>
         <section class="today-block">
-          <div class="section-head"><h2>On the horizon</h2></div>
-          <div id="weekStrip" class="week"></div>
-          <div id="horizonList"></div>
+          <div class="section-head"><h2>This week</h2><span class="muted" id="weekRange"></span></div>
+          <div class="week-nav">
+            <button type="button" class="week-nav-btn" id="weekPrev" aria-label="Previous week">&#8249;</button>
+            <div id="weekStrip" class="week"></div>
+            <button type="button" class="week-nav-btn" id="weekNext" aria-label="Next week">&#8250;</button>
+          </div>
         </section>
 
         <section class="today-block">
@@ -1460,6 +1506,10 @@ function parseDay(iso) {
   return new Date(\`\${iso}T00:00:00\`);
 }
 
+function isoOf(d) {
+  return \`\${d.getFullYear()}-\${String(d.getMonth() + 1).padStart(2, '0')}-\${String(d.getDate()).padStart(2, '0')}\`;
+}
+
 function daysUntil(iso) {
   return Math.round((parseDay(iso) - parseDay(todayStr())) / 86400000);
 }
@@ -1620,12 +1670,16 @@ $('#actorSelect').addEventListener('change', (e) => {
 
 /* ================= navigation ================= */
 
+function showView(name) {
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === name));
+  document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
+  $(\`#view-\${name}\`).classList.remove('hidden');
+}
+
 $('#tabs').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-view]');
   if (!btn) return;
-  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === btn));
-  document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
-  $(\`#view-\${btn.dataset.view}\`).classList.remove('hidden');
+  showView(btn.dataset.view);
 });
 
 /* ================= shared chips ================= */
@@ -1655,6 +1709,68 @@ const ACTION_LABELS = {
   deadline_updated: 'updated a deadline',
   report_posted: 'posted a daily report',
 };
+
+/* ---------- week calendar (Today rail) ----------
+   One Sunday–Saturday week at a time; weekOffset moves it with the
+   chevrons. Days are real buttons: a click jumps to that date in the
+   Deadlines view, flashing its rows — or landing on the nearest
+   deadline when the day itself has none, so it never feels dead. */
+
+let weekOffset = 0;
+
+function renderWeekStrip() {
+  if (!state) return;
+  const deadlines = state.deadlines || [];
+  const deadlineDates = new Set(deadlines.map((d) => d.date));
+  const sunday = parseDay(todayStr());
+  sunday.setDate(sunday.getDate() - sunday.getDay() + weekOffset * 7);
+  const weekLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  let weekHtml = '';
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(sunday);
+    d.setDate(sunday.getDate() + i);
+    const iso = isoOf(d);
+    const count = deadlines.filter((x) => x.date === iso).length;
+    const label = \`\${fmtDate(iso)}\${count ? \` — \${count} deadline\${count > 1 ? 's' : ''}\` : ''}\`;
+    weekHtml += \`<button type="button" class="week-day\${iso === todayStr() ? ' today' : ''}" data-week-date="\${iso}" aria-label="\${esc(label)}" title="\${esc(label)}"><span class="week-letter">\${weekLetters[i]}</span><span class="week-num">\${d.getDate()}</span>\${deadlineDates.has(iso) ? '<span class="week-dot"></span>' : ''}</button>\`;
+  }
+  $('#weekStrip').innerHTML = weekHtml;
+
+  const end = new Date(sunday);
+  end.setDate(sunday.getDate() + 6);
+  const startLabel = sunday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const endLabel = sunday.getMonth() === end.getMonth()
+    ? String(end.getDate())
+    : end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  $('#weekRange').textContent = \`\${startLabel} – \${endLabel}\`;
+}
+
+function gotoDeadlineDate(iso) {
+  showView('deadlines');
+  const rows = [...document.querySelectorAll('#deadlineList .deadline-row')];
+  rows.forEach((r) => r.classList.remove('flash'));
+  const matches = rows.filter((r) => r.dataset.date === iso);
+  let target = matches[0];
+  if (!target) {
+    const byDate = [...(state.deadlines || [])].sort((a, b) => a.date.localeCompare(b.date));
+    const near = byDate.find((d) => d.date > iso) || byDate[byDate.length - 1];
+    if (near) target = rows.find((r) => Number(r.dataset.deadlineId) === near.id);
+  }
+  if (!target) target = rows[0];
+  if (!target) return;
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (matches.length) {
+    matches.forEach((r) => r.classList.add('flash'));
+    setTimeout(() => matches.forEach((r) => r.classList.remove('flash')), 2500);
+  }
+}
+
+$('#weekStrip').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-week-date]');
+  if (btn) gotoDeadlineDate(btn.dataset.weekDate);
+});
+$('#weekPrev').addEventListener('click', () => { weekOffset -= 1; renderWeekStrip(); });
+$('#weekNext').addEventListener('click', () => { weekOffset += 1; renderWeekStrip(); });
 
 function renderToday() {
   const tasks = state.tasks || [];
@@ -1686,19 +1802,7 @@ function renderToday() {
       ? 'A quiet look at where things stand.'
       : 'A quiet look back at the day, and at what tomorrow asks.';
 
-  // Week strip: Sunday–Saturday of the current week; dots mark deadline days.
-  const deadlineDates = new Set((state.deadlines || []).map((d) => d.date));
-  const sunday = parseDay(todayStr());
-  sunday.setDate(sunday.getDate() - sunday.getDay());
-  const weekLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-  let weekHtml = '';
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(sunday);
-    d.setDate(sunday.getDate() + i);
-    const iso = \`\${d.getFullYear()}-\${String(d.getMonth() + 1).padStart(2, '0')}-\${String(d.getDate()).padStart(2, '0')}\`;
-    weekHtml += \`<div class="week-day\${iso === todayStr() ? ' today' : ''}"><span class="week-letter">\${weekLetters[i]}</span><span class="week-num">\${d.getDate()}</span>\${deadlineDates.has(iso) ? '<span class="week-dot"></span>' : ''}</div>\`;
-  }
-  $('#weekStrip').innerHTML = weekHtml;
+  renderWeekStrip();
 
   // One quiet line of counts — these numbers live here and nowhere else.
   $('#statsRow').textContent =
@@ -1738,19 +1842,29 @@ function renderToday() {
       </div>\`
     : '<p class="muted">Nothing is pressing today.</p>';
 
-  // On the horizon: the next few deadlines after today.
-  const horizon = (state.deadlines || [])
-    .filter((d) => daysUntil(d.date) > 0)
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(0, 4);
-  $('#horizonList').innerHTML = horizon.length
-    ? horizon.map((d) => \`
-        <div class="horizon-item">
-          <span class="h-date">\${esc(fmtDate(d.date))}</span>
-          <div class="grow">\${esc(d.title)}</div>
-          \${ownerChip(d.owner)}
-        </div>\`).join('')
-    : '<p class="muted">No deadlines on the horizon.</p>';
+  // Upcoming deadlines: the callout at the top of Today. Overdue and
+  // today's deadlines come first — they are the ones that must not be
+  // missed — then the next ones out, four in all.
+  const byDate = [...(state.deadlines || [])].sort((a, b) => a.date.localeCompare(b.date));
+  const pressing = byDate.filter((d) => daysUntil(d.date) <= 0);
+  const ahead = byDate.filter((d) => daysUntil(d.date) > 0);
+  const called = [...pressing, ...ahead].slice(0, 4);
+  $('#upcomingList').innerHTML = called.length
+    ? called.map((d) => {
+        const dt = parseDay(d.date);
+        const days = daysUntil(d.date);
+        const cls = days < 0 ? ' overdue' : days === 0 ? ' today' : '';
+        return \`
+        <div class="upcoming-item\${cls}">
+          <div class="upcoming-date">
+            <span class="u-day">\${dt.getDate()}</span>
+            <span class="u-mon">\${dt.toLocaleDateString('en-US', { month: 'short' })}</span>
+          </div>
+          <div class="grow upcoming-title">\${esc(d.title)}</div>
+          \${ownerChip(d.owner)}\${deadlineChip(d)}
+        </div>\`;
+      }).join('')
+    : '<p class="muted">No deadlines coming up.</p>';
 
   $('#activityList').innerHTML = (state.activity || []).length
     ? state.activity.map((a) => \`
@@ -1921,7 +2035,7 @@ function renderDeadlines() {
     ? list.map((d) => {
         const dt = parseDay(d.date);
         return \`
-        <div class="deadline-row \${daysUntil(d.date) < 0 ? 'past' : ''}" data-deadline-id="\${d.id}">
+        <div class="deadline-row \${daysUntil(d.date) < 0 ? 'past' : ''}" data-deadline-id="\${d.id}" data-date="\${esc(d.date)}">
           <div class="deadline-date">
             <div class="d-day">\${dt.getDate()}</div>
             <div class="d-mon">\${dt.toLocaleDateString('en-US', { month: 'short' })}</div>

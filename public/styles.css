@@ -279,7 +279,22 @@ main {
 #todayDigestTitle, #digestViewTitle { font-family: var(--serif); font-size: 1.32rem; font-weight: 600; line-height: 1.25; }
 
 /* ---------- week strip ---------- */
-.week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.3rem; margin-bottom: 0.7rem; }
+.week-nav { display: flex; align-items: center; gap: 0.15rem; }
+.week { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.3rem; }
+.week-nav-btn {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  padding: 0.35rem 0.4rem;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.week-nav-btn:hover { background: var(--sage-soft); color: var(--green); }
+.week-nav-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .week-day {
   position: relative;
   display: flex;
@@ -287,12 +302,20 @@ main {
   align-items: center;
   gap: 0.1rem;
   padding: 0.55rem 0 0.95rem;
+  border: none;
+  background: none;
+  font: inherit;
   border-radius: 10px;
   color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
+.week-day:hover { background: var(--sage-soft); }
+.week-day:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .week-letter { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em; color: var(--muted); }
 .week-num { font-size: 1rem; font-weight: 600; line-height: 1.15; color: var(--ink); }
 .week-day.today { background: var(--green); }
+.week-day.today:hover { background: var(--deep); }
 .week-day.today .week-letter { color: rgba(248, 247, 242, 0.72); }
 .week-day.today .week-num { color: var(--ivory); }
 .week-dot {
@@ -395,16 +418,23 @@ main {
 .focus-line a { color: var(--ink); font-weight: 600; text-decoration: none; }
 .focus-line a:hover { color: var(--green); text-decoration: underline; }
 
-.horizon-item {
+/* ---------- upcoming deadlines callout (Today) ---------- */
+.deadlines-callout { background: var(--sage-soft); border: 1px solid #dde5d4; }
+.callout-title { font-family: var(--serif); font-size: 1.32rem; font-weight: 600; color: var(--deep); }
+.upcoming-item {
   display: flex;
   gap: 0.9rem;
-  align-items: baseline;
-  padding: 0.55rem 0;
-  border-bottom: 1px solid var(--line-soft);
-  font-size: 0.92rem;
+  align-items: center;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid #dde5d4;
+  font-size: 0.94rem;
 }
-.horizon-item:last-child { border-bottom: none; }
-.h-date { color: var(--muted); font-size: 0.82rem; font-weight: 600; min-width: 62px; }
+.upcoming-item:last-child { border-bottom: none; }
+.upcoming-date { display: flex; align-items: baseline; gap: 0.35rem; min-width: 76px; }
+.u-day { font-family: var(--serif); font-size: 1.45rem; font-weight: 600; line-height: 1; color: var(--caramel); }
+.u-mon { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); }
+.upcoming-item.today .u-day, .upcoming-item.overdue .u-day { color: var(--red); }
+.upcoming-title { font-weight: 550; }
 
 .activity-item {
   display: flex;
@@ -433,6 +463,12 @@ main {
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
 .deadline-row:hover { box-shadow: var(--shadow-lift); border-color: #d6d6c2; }
+/* Arriving from a calendar-day click: the row glows sage, then settles. */
+@keyframes rowFlash {
+  0%, 55% { background: var(--sage); border-color: var(--green); }
+  100% { background: var(--paper); border-color: var(--line); }
+}
+.deadline-row.flash { animation: rowFlash 2.4s ease-out forwards; }
 .deadline-date { text-align: center; min-width: 58px; }
 .deadline-date .d-day { font-family: var(--serif); font-size: 1.7rem; font-weight: 600; line-height: 1.05; }
 .deadline-date .d-mon { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); }

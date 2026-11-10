@@ -26,6 +26,10 @@ function parseDay(iso) {
   return new Date(`${iso}T00:00:00`);
 }
 
+function isoOf(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function daysUntil(iso) {
   return Math.round((parseDay(iso) - parseDay(todayStr())) / 86400000);
 }
@@ -186,12 +190,16 @@ $('#actorSelect').addEventListener('change', (e) => {
 
 /* ================= navigation ================= */
 
+function showView(name) {
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === name));
+  document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
+  $(`#view-${name}`).classList.remove('hidden');
+}
+
 $('#tabs').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-view]');
   if (!btn) return;
-  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === btn));
-  document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
-  $(`#view-${btn.dataset.view}`).classList.remove('hidden');
+  showView(btn.dataset.view);
 });
 
 /* ================= shared chips ================= */
@@ -221,6 +229,68 @@ const ACTION_LABELS = {
   deadline_updated: 'updated a deadline',
   report_posted: 'posted a daily report',
 };
+
+/* ---------- week calendar (Today rail) ----------
+   One Sunday–Saturday week at a time; weekOffset moves it with the
+   chevrons. Days are real buttons: a click jumps to that date in the
+   Deadlines view, flashing its rows — or landing on the nearest
+   deadline when the day itself has none, so it never feels dead. */
+
+let weekOffset = 0;
+
+function renderWeekStrip() {
+  if (!state) return;
+  const deadlines = state.deadlines || [];
+  const deadlineDates = new Set(deadlines.map((d) => d.date));
+  const sunday = parseDay(todayStr());
+  sunday.setDate(sunday.getDate() - sunday.getDay() + weekOffset * 7);
+  const weekLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  let weekHtml = '';
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(sunday);
+    d.setDate(sunday.getDate() + i);
+    const iso = isoOf(d);
+    const count = deadlines.filter((x) => x.date === iso).length;
+    const label = `${fmtDate(iso)}${count ? ` — ${count} deadline${count > 1 ? 's' : ''}` : ''}`;
+    weekHtml += `<button type="button" class="week-day${iso === todayStr() ? ' today' : ''}" data-week-date="${iso}" aria-label="${esc(label)}" title="${esc(label)}"><span class="week-letter">${weekLetters[i]}</span><span class="week-num">${d.getDate()}</span>${deadlineDates.has(iso) ? '<span class="week-dot"></span>' : ''}</button>`;
+  }
+  $('#weekStrip').innerHTML = weekHtml;
+
+  const end = new Date(sunday);
+  end.setDate(sunday.getDate() + 6);
+  const startLabel = sunday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const endLabel = sunday.getMonth() === end.getMonth()
+    ? String(end.getDate())
+    : end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  $('#weekRange').textContent = `${startLabel} – ${endLabel}`;
+}
+
+function gotoDeadlineDate(iso) {
+  showView('deadlines');
+  const rows = [...document.querySelectorAll('#deadlineList .deadline-row')];
+  rows.forEach((r) => r.classList.remove('flash'));
+  const matches = rows.filter((r) => r.dataset.date === iso);
+  let target = matches[0];
+  if (!target) {
+    const byDate = [...(state.deadlines || [])].sort((a, b) => a.date.localeCompare(b.date));
+    const near = byDate.find((d) => d.date > iso) || byDate[byDate.length - 1];
+    if (near) target = rows.find((r) => Number(r.dataset.deadlineId) === near.id);
+  }
+  if (!target) target = rows[0];
+  if (!target) return;
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (matches.length) {
+    matches.forEach((r) => r.classList.add('flash'));
+    setTimeout(() => matches.forEach((r) => r.classList.remove('flash')), 2500);
+  }
+}
+
+$('#weekStrip').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-week-date]');
+  if (btn) gotoDeadlineDate(btn.dataset.weekDate);
+});
+$('#weekPrev').addEventListener('click', () => { weekOffset -= 1; renderWeekStrip(); });
+$('#weekNext').addEventListener('click', () => { weekOffset += 1; renderWeekStrip(); });
 
 function renderToday() {
   const tasks = state.tasks || [];
@@ -252,19 +322,7 @@ function renderToday() {
       ? 'A quiet look at where things stand.'
       : 'A quiet look back at the day, and at what tomorrow asks.';
 
-  // Week strip: Sunday–Saturday of the current week; dots mark deadline days.
-  const deadlineDates = new Set((state.deadlines || []).map((d) => d.date));
-  const sunday = parseDay(todayStr());
-  sunday.setDate(sunday.getDate() - sunday.getDay());
-  const weekLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-  let weekHtml = '';
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(sunday);
-    d.setDate(sunday.getDate() + i);
-    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    weekHtml += `<div class="week-day${iso === todayStr() ? ' today' : ''}"><span class="week-letter">${weekLetters[i]}</span><span class="week-num">${d.getDate()}</span>${deadlineDates.has(iso) ? '<span class="week-dot"></span>' : ''}</div>`;
-  }
-  $('#weekStrip').innerHTML = weekHtml;
+  renderWeekStrip();
 
   // One quiet line of counts — these numbers live here and nowhere else.
   $('#statsRow').textContent =
@@ -304,19 +362,29 @@ function renderToday() {
       </div>`
     : '<p class="muted">Nothing is pressing today.</p>';
 
-  // On the horizon: the next few deadlines after today.
-  const horizon = (state.deadlines || [])
-    .filter((d) => daysUntil(d.date) > 0)
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(0, 4);
-  $('#horizonList').innerHTML = horizon.length
-    ? horizon.map((d) => `
-        <div class="horizon-item">
-          <span class="h-date">${esc(fmtDate(d.date))}</span>
-          <div class="grow">${esc(d.title)}</div>
-          ${ownerChip(d.owner)}
-        </div>`).join('')
-    : '<p class="muted">No deadlines on the horizon.</p>';
+  // Upcoming deadlines: the callout at the top of Today. Overdue and
+  // today's deadlines come first — they are the ones that must not be
+  // missed — then the next ones out, four in all.
+  const byDate = [...(state.deadlines || [])].sort((a, b) => a.date.localeCompare(b.date));
+  const pressing = byDate.filter((d) => daysUntil(d.date) <= 0);
+  const ahead = byDate.filter((d) => daysUntil(d.date) > 0);
+  const called = [...pressing, ...ahead].slice(0, 4);
+  $('#upcomingList').innerHTML = called.length
+    ? called.map((d) => {
+        const dt = parseDay(d.date);
+        const days = daysUntil(d.date);
+        const cls = days < 0 ? ' overdue' : days === 0 ? ' today' : '';
+        return `
+        <div class="upcoming-item${cls}">
+          <div class="upcoming-date">
+            <span class="u-day">${dt.getDate()}</span>
+            <span class="u-mon">${dt.toLocaleDateString('en-US', { month: 'short' })}</span>
+          </div>
+          <div class="grow upcoming-title">${esc(d.title)}</div>
+          ${ownerChip(d.owner)}${deadlineChip(d)}
+        </div>`;
+      }).join('')
+    : '<p class="muted">No deadlines coming up.</p>';
 
   $('#activityList').innerHTML = (state.activity || []).length
     ? state.activity.map((a) => `
@@ -487,7 +555,7 @@ function renderDeadlines() {
     ? list.map((d) => {
         const dt = parseDay(d.date);
         return `
-        <div class="deadline-row ${daysUntil(d.date) < 0 ? 'past' : ''}" data-deadline-id="${d.id}">
+        <div class="deadline-row ${daysUntil(d.date) < 0 ? 'past' : ''}" data-deadline-id="${d.id}" data-date="${esc(d.date)}">
           <div class="deadline-date">
             <div class="d-day">${dt.getDate()}</div>
             <div class="d-mon">${dt.toLocaleDateString('en-US', { month: 'short' })}</div>

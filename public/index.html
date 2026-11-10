@@ -89,6 +89,13 @@
 
       <div class="today-grid">
       <div class="today-main">
+        <div class="card deadlines-callout">
+          <div class="card-head">
+            <h2 class="callout-title">Upcoming deadlines</h2>
+          </div>
+          <div id="upcomingList"></div>
+        </div>
+
         <div class="card digest-card">
           <div class="card-head">
             <div>
@@ -117,9 +124,12 @@
       <aside class="today-rail">
         <p class="counts-line" id="statsRow"></p>
         <section class="today-block">
-          <div class="section-head"><h2>On the horizon</h2></div>
-          <div id="weekStrip" class="week"></div>
-          <div id="horizonList"></div>
+          <div class="section-head"><h2>This week</h2><span class="muted" id="weekRange"></span></div>
+          <div class="week-nav">
+            <button type="button" class="week-nav-btn" id="weekPrev" aria-label="Previous week">&#8249;</button>
+            <div id="weekStrip" class="week"></div>
+            <button type="button" class="week-nav-btn" id="weekNext" aria-label="Next week">&#8250;</button>
+          </div>
         </section>
 
         <section class="today-block">
