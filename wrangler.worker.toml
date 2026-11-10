@@ -1,0 +1,7 @@
+name = "jesutofunmios"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+[[d1_databases]]
+binding = "DB"
+database_name = "life-hq"
+database_id = "61ddb5e2-34b8-454e-b544-48883a65ddf9"

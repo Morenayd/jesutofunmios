@@ -1,0 +1,47 @@
+# Deadlines from email — scan of 2026-11-09 (for JesutofunmiOS)
+
+- Mailbox scanned: hellojesutofunmi@gmail.com (Gmail), messages from ~2026-10-01 onward, plus deadline-keyword searches (deadline, due, apply by, closes, RSVP, expires, submission, interview, appointment, renew, payment due) and a pvamu.edu sender search.
+- Cut-off applied: dated obligations from **Monday 2026-11-10 onward** only.
+- **Coverage limit (important):** the Gmail connector hit its request quota partway through this scan (`connector_rate_limited`, terminal for the attempt). Subject-line triage completed for all searches; full bodies were read only for the Schneider Electric and Honor Society items below, plus previously saved copies (Campground/BVCC Session 8 notice). Bodies NOT read: BVCC Session 8 Follow Up (2026-11-05), BVCC Session 9 email (2026-11-09), NWHC Fall Holiday Market (2026-11-09), Devpost hackathons (2026-11-06), Judah Ben digest (2026-11-09 22:10 CT). A follow-up pass should read those bodies — BVCC follow-ups typically carry the next assignment due date.
+- **School mailbox note:** her PVAMU school email (jadewole@pvamu.edu) is not connected here. In this Gmail, the only pvamu.edu sender in the window is the NWHC Center (event notices). No professor, course-platform or PVAMU-office deadline email to this address was found.
+
+## NEW dated items
+
+**None.** Every concrete dated obligation dated 2026-11-10 or later that this scan surfaced was already in the known calendar (see the ALREADY-KNOWN table). The scan corroborated the existing list; it did not add a new dated deadline. New material from the scan is in the undated section below.
+
+## ALREADY-KNOWN matches (email evidence corroborates the existing calendar)
+
+| Title | Date | Source (sender, email date) | Category | Owner | Notes |
+|---|---|---|---|---|---|
+| Formlabs retained application tab expires (Hardware Systems Integration Intern filing completes only with her portfolio answer) | 2026-11-10, ~00:56 CT | Nightly pipeline record; parked form from the Formlabs filing | Applications | Jesutofunmi | Hard cut-off for the retained tab; after it, the filing restarts in a live session |
+| BVCC Session 9 — Financial Analysis & Data Room | 2026-11-10, 18:00–20:00 CT | BVCC <aliceyn@bvcc.vc>, 2026-11-09 15:58 CT; calendar invite from Aliceyn Cudjo, 2026-11-09 07:52 CT | BVCC-Learning | Jesutofunmi | Attend; Session 8 assignment submission beforehand earns Alumni TA feedback |
+| BVCC Session 8 Assignment due | 2026-11-10 05:00 UTC (= 2026-11-09 23:00 CT) | Campground <notify@campgroundalerts.fyi>, 2026-11-08 23:04 CT | BVCC-Learning | Jesutofunmi | Hard deadline; already flagged to her twice on Nov 9; completion unknown |
+| DAC 2027 research manuscript abstracts due | 2026-11-10 | DAC 2027 <dac+marketing@dac.com>, 2026-11-09 09:24 CT ("Abstracts Due Tomorrow") | School | Jesutofunmi | Hard deadline per the email; whether she is submitting is unrecorded |
+| Honor Society next scholarship round apply-by | 2026-11-12 | Honor Society <memberservices@honorsociety.org>, 2026-11-09 08:04 CT | Scholarships | Jesutofunmi | Marketing email; matches the known Graduate Achiever email cut-off — MOOT, she submitted all five Honor Society applications on Nov 9 (five confirmation emails arrived Nov 9–10). The same email's "activate membership by Nov 30" does not apply: she is already a member |
+| IEEE Houston Cybersecurity Summit | 2026-11-12 | IEEE eNotice <enotice@enotice.ieee.org>, 2026-11-09 10:57 CT and 18:47 CT | Events | Jesutofunmi | Event, not a deadline; attendance optional, no commitment recorded |
+| Honor Society Member Spotlight video deadline ($2,000) | 2026-11-14 | Honor Society programme pages (known record) | Scholarships | Jesutofunmi | Hard deadline; the application is a video only she can record; NOT filed |
+| Burns & McDonnell pre-recorded video interview | ~2026-11-15, ~23:23 ET | Burns & McDonnell Recruiting <burnsmcd@yello.co>, 2026-11-08 22:23 CT | Applications | Jesutofunmi | "Within one week of the invite" — approximate hard deadline; also send the unofficial transcript email to recruiting@burnsmcd.com (draft ready, awaiting her tap; owner for the send: Nayden) |
+| Headshot appointment, Evans Hall, 2nd floor | 2026-11-20, 10:00 CT | Known record (contact cwbooker@pvamu.edu) | School | Jesutofunmi | Appointment; also her 26th birthday |
+| Roblox Associate Product Manager, Early Career closes | 2026-11-20, 17:00 PT | Known record (live re-check 2026-10-30) | Applications | Jesutofunmi | Category A — she files manually; rolling close |
+| Honor Society High Honors Student deadline ($2,000) | 2026-11-21 | Honor Society programme pages (known record) | Scholarships | Jesutofunmi | Already SUBMITTED Nov 9 — no action |
+| Honor Society Lone Star (Texas) deadline ($2,000) | 2026-11-28 | Honor Society programme pages (known record) | Scholarships | Jesutofunmi | Already SUBMITTED Nov 9 — no action |
+| Honor Society Community Service deadline ($1,000) | 2026-11-28 | Honor Society programme pages (known record) | Scholarships | Jesutofunmi | Hard deadline; NOT filed — needs a real planned service programme with dates from her |
+| BVCC SparkCharge capstone investment memo due | 2026-11-30, 23:59 ET | BVCC course record (known) | BVCC-Learning | Jesutofunmi | Hard deadline; required for the Premium Certificate; starter brief is prepared |
+| SBB STEM / William A. Lewis / STEAM Generator deadlines | 2026-11-30 | Scholarship records (known) | Scholarships | Jesutofunmi | All already SUBMITTED Nov 2 — no action |
+
+## Undated action items (no concrete date in the email)
+
+| Item | Evidence | Category | Owner | Notes |
+|---|---|---|---|---|
+| Schneider Electric Global Student Experience 2026 — registration window closes | Email from Schneider Electric Talent Acquisition <se@nurture.icims.com>, 2026-11-08 17:01 CT, body read in full: "Registrations: Opens on February 24, 2026, and will be available until December 2026" — month only, no day stated | Events | Jesutofunmi | Free 100% online self-paced e-learning (4–12 hrs) with certificate; sign-up is optional, no commitment recorded |
+| NWHC 4th Annual Fall Holiday Market (PVAMU) — event date unconfirmed | NWHC Center <nwhc@pvamu.edu> announcements on 2026-10-23, 2026-10-29, 2026-11-06 and 2026-11-09 (latest 09:05 CT); body not read before the Gmail quota stopped the scan | School | Jesutofunmi | School event notice; no action or date could be confirmed from the subject line — recheck the body in a later pass |
+| New Judah Ben internship digest pickup | "New 2027 Internship Openings - 2026-11-09 (10 PM CT)", Judah Ben <judahben149@gmail.com>, 2026-11-09 22:10 CT; body not yet screened | Applications | Nayden | Any role deadlines inside are unextracted; belongs to the next pipeline run |
+| BVCC remaining Tuesday sessions + Session 9 assignment due date | BVCC Session 8 Follow Up (Aliceyn Cudjo via Campground, 2026-11-05 12:50 CT) and the Session 9 email (2026-11-09) were not body-read before the quota stop; weekly pattern suggests further Tuesday sessions before the Nov 30 capstone, but no date is asserted without the email text | BVCC-Learning | Jesutofunmi | Recheck both bodies in a later pass before relying on any session/assignment date |
+| Devpost hackathon deadlines | "HACKATHONS just for you, Jesutofunmi", Cassie from Devpost <cassie@devpost.com>, 2026-11-06 15:43 CT; body not read | Events | Jesutofunmi | Individual hackathon deadlines, if any, are inside the unread body |
+| Global Health E-Learning (University of Washington) January 2027 courses | "Applications Open for January 2027 Courses (With New AI Course!)", info@edgh.washington.edu, 2026-11-03 21:02 CT; no application deadline in the subject | School | Jesutofunmi | Optional external courses; deadline, if any, is in the body |
+| CodePath Advanced Technical Interview Prep enrolment confirmation | CodePath <admissions@codepath.org>, 2026-11-06 03:38 CT; no confirmation deadline stated in the email | BVCC-Learning | Jesutofunmi | Confirm via the email link while logged into GitHub as Morenayd; course starts Feb 23, Tue/Thu 6–8 PM ET |
+| Fountain Hill Apartments document signing (Nov 6 document) | Blue Moon / do-not-reply@bluemoonforms.com, 2026-11-06 10:10 CT; documents expire if left unsigned, no expiry date stated | Money-Housing | Jesutofunmi | Hers to sign; completion unknown |
+| Superhuman Mail payment method update | The Superhuman Team <hello@superhuman.com>, 2026-11-09 10:14 CT; payment failed, no retry date stated | Money-Housing | Jesutofunmi | Update the payment method via the email link |
+| Google account security check | Google critical security alerts 2026-11-04 (recovery email, passkey, recovery phone disabled) and Instinct access alert 2026-11-06 11:12 ET | Personal | Jesutofunmi | Check at myaccount.google.com directly, not via email links; no date pressure stated |
+| Bose application portal check | Bose Corporation <opportunities@campaigns.bose.com>, 2026-11-07 05:04 CT "Complete your Incomplete application" vs the confirmed application receipt of 2026-11-05 18:28 CT | Applications | Jesutofunmi | Assessed as a stale automated nudge; 30-second portal check in a live session only — do NOT re-apply |
+| WIPO DL101 IP course end | DL101ENG <dl101eng@wipo.int>, 2026-11-05 — a platform-access notice with no dates; her own record says the IP course ends November 2026, no day sourced from email | BVCC-Learning | Jesutofunmi | No email-stated deadline; flagged so the dashboard does not invent one |

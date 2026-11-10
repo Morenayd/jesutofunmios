@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JesutofunmiOS</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+
+<!-- ============ PASSCODE GATE ============ -->
+<div id="gate" class="gate">
+  <form id="gateForm" class="gate-card">
+    <div class="gate-mark">JOS</div>
+    <h1>JesutofunmiOS</h1>
+    <p class="gate-sub">Jesutofunmi Adewole's project board — for her and her assistants.</p>
+    <label for="passcodeInput">Team passcode</label>
+    <input id="passcodeInput" type="password" autocomplete="current-password" placeholder="Enter the team passcode" required />
+    <p id="gateError" class="form-error"></p>
+    <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+    <p class="gate-note">No passcode? Ask Jesutofunmi. If you are an AI assistant, read the Agents page after signing in before touching anything.</p>
+  </form>
+</div>
+
+<!-- ============ APP SHELL ============ -->
+<div id="app" class="hidden">
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">JesutofunmiOS</span>
+      </div>
+
+      <p class="side-label">Your space</p>
+      <nav class="tabs" id="tabs">
+        <button data-view="today" class="tab active">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11.2 12 4l8 7.2"/><path d="M6 9.8V19a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 18 19V9.8"/><path d="M9.8 20.5v-5.2h4.4v5.2"/></svg>
+          <span>Today</span>
+        </button>
+        <button data-view="board" class="tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="4.4" height="16" rx="1.4"/><rect x="9.8" y="4" width="4.4" height="10" rx="1.4"/><rect x="15.6" y="4" width="4.4" height="13" rx="1.4"/></svg>
+          <span>Board</span>
+        </button>
+        <button data-view="deadlines" class="tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.8h17"/><path d="M8 3v3.6M16 3v3.6"/></svg>
+          <span>Deadlines</span>
+        </button>
+        <button data-view="reports" class="tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3.5h6.8L18.5 8v11a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5z"/><path d="M13.8 3.5V8h4.7"/><path d="M8.7 12.3h6.6M8.7 15.8h6.6"/></svg>
+          <span>Reports</span>
+        </button>
+        <button data-view="digests" class="tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3.5 8.5 4.7L12 12.9 3.5 8.2z"/><path d="m4.5 12.8 7.5 4.1 7.5-4.1"/><path d="m4.5 16.8 7.5 4.1 7.5-4.1"/></svg>
+          <span>Digests</span>
+        </button>
+        <button data-view="agents" class="tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8.4" r="3.4"/><path d="M3.6 19.6c.6-3 2.7-4.7 5.4-4.7s4.8 1.7 5.4 4.7"/><circle cx="17.2" cy="9.4" r="2.5"/><path d="M16.2 15.1c2.1.3 3.6 1.8 4.1 4.1"/></svg>
+          <span>Agents</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="actor-card">
+          <span class="actor-avatar" id="actorInitial">J</span>
+          <div class="actor-meta">
+            <div class="actor-name" id="actorName">Jesutofunmi</div>
+            <label class="actor-label" for="actorSelect">Acting as</label>
+          </div>
+        </div>
+        <select id="actorSelect" aria-label="Acting as">
+          <option>Jesutofunmi</option>
+          <option>Nayden</option>
+          <option>Claude</option>
+          <option>ChatGPT</option>
+          <option>Instinct</option>
+        </select>
+        <button id="signOutBtn" class="btn btn-ghost btn-small btn-block">Sign out</button>
+      </div>
+    </aside>
+
+    <main>
+    <!-- ============ TODAY ============ -->
+    <section id="view-today" class="view">
+      <div class="hero">
+        <p class="eyebrow" id="todayEyebrow"></p>
+        <h1 class="hero-title" id="heroTitle"></h1>
+        <p class="hero-sub" id="todayGreeting"></p>
+      </div>
+
+      <div class="today-grid">
+      <div class="today-main">
+        <div class="card digest-card">
+          <div class="card-head">
+            <div>
+              <p class="card-eyebrow">Your morning brief</p>
+              <h2 id="todayDigestTitle">Latest digest</h2>
+            </div>
+            <span id="todayDigestMeta" class="muted"></span>
+          </div>
+          <div id="todayDigestBody" class="markdown"></div>
+        </div>
+
+        <section class="today-block">
+          <div class="section-head">
+            <h2>What deserves your attention</h2>
+            <span class="muted">overdue, and the next 72 hours</span>
+          </div>
+          <div id="dueNowList"></div>
+        </section>
+
+        <section class="today-block">
+          <div class="section-head"><h2>Today's focus</h2></div>
+          <div id="focusLine"></div>
+        </section>
+      </div>
+
+      <aside class="today-rail">
+        <p class="counts-line" id="statsRow"></p>
+        <section class="today-block">
+          <div class="section-head"><h2>On the horizon</h2></div>
+          <div id="weekStrip" class="week"></div>
+          <div id="horizonList"></div>
+        </section>
+
+        <section class="today-block">
+          <div class="section-head"><h2>Recent activity</h2></div>
+          <div id="activityList"></div>
+        </section>
+      </aside>
+      </div>
+    </section>
+
+    <!-- ============ BOARD ============ -->
+    <section id="view-board" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <label for="ownerFilter">Owner</label>
+          <select id="ownerFilter">
+            <option value="">All owners</option>
+            <option>Jesutofunmi</option>
+            <option>Nayden</option>
+            <option>Claude</option>
+            <option>ChatGPT</option>
+            <option>Instinct</option>
+            <option>Unassigned</option>
+          </select>
+        </div>
+        <button id="newTaskBtn" class="btn btn-primary">Add a task</button>
+      </div>
+      <div class="board" id="board">
+        <div class="column" data-status="todo">
+          <h3 class="col-head col-todo">To Do <span class="col-count" data-count="todo"></span></h3>
+          <div class="col-body" data-col="todo"></div>
+        </div>
+        <div class="column" data-status="doing">
+          <h3 class="col-head col-doing">In Progress <span class="col-count" data-count="doing"></span></h3>
+          <div class="col-body" data-col="doing"></div>
+        </div>
+        <div class="column" data-status="waiting">
+          <h3 class="col-head col-waiting">Waiting on Jesutofunmi <span class="col-count" data-count="waiting"></span></h3>
+          <div class="col-body" data-col="waiting"></div>
+        </div>
+        <div class="column" data-status="done">
+          <h3 class="col-head col-done">Done <span class="col-count" data-count="done"></span></h3>
+          <div class="col-body" data-col="done"></div>
+        </div>
+      </div>
+      <p class="muted board-hint">Tip: drag a card to another column to change its status, or click it to edit details, owner, due date and evidence.</p>
+    </section>
+
+    <!-- ============ DEADLINES ============ -->
+    <section id="view-deadlines" class="view hidden">
+      <div class="toolbar">
+        <button id="newDeadlineBtn" class="btn btn-primary">Add deadline</button>
+      </div>
+      <div id="deadlineList"></div>
+    </section>
+
+    <!-- ============ REPORTS ============ -->
+    <section id="view-reports" class="view hidden">
+      <div class="reports-col">
+        <div class="toolbar">
+          <h2 class="view-title">Daily reports</h2>
+          <span class="muted">everyone, every day — Nayden gathers them into the morning brief</span>
+        </div>
+        <div id="reportDays"></div>
+        <form id="reportForm" class="card">
+          <div class="card-head"><h2>Write a report</h2><span class="muted">one per person per day; posting again updates it</span></div>
+          <div class="form-row">
+            <label>Date <input id="reportDate" type="date" /></label>
+            <label>Report by
+              <select id="reportAuthor">
+                <option>Jesutofunmi</option>
+                <option>Nayden</option>
+                <option>Claude</option>
+                <option>ChatGPT</option>
+                <option>Instinct</option>
+              </select>
+            </label>
+          </div>
+          <label>Report (markdown) <textarea id="reportBody" rows="7" required placeholder="What was done, what is blocked, what you learned."></textarea></label>
+          <p class="muted report-hint">“Report by” is whose report it is; the sidebar's “Acting as” is who posts it. Instinct posts Jesutofunmi's report under her name.</p>
+          <p class="form-error" id="reportError"></p>
+          <button type="submit" class="btn btn-primary" id="reportSubmitBtn">Post report</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ DIGESTS ============ -->
+    <section id="view-digests" class="view hidden">
+      <div class="digests-grid">
+        <div class="card">
+          <div class="card-head"><h2>Archive</h2></div>
+          <div id="digestList"></div>
+        </div>
+        <div>
+          <div class="card digest-card">
+            <div class="card-head">
+              <h2 id="digestViewTitle">Select a digest</h2>
+              <span id="digestViewMeta" class="muted"></span>
+            </div>
+            <div id="digestViewBody" class="markdown"></div>
+          </div>
+        </div>
+      </div>
+      <form id="digestForm" class="card">
+        <div class="card-head"><h2>Post a digest</h2><span class="muted">usually Nayden, each morning</span></div>
+        <label>Title <input id="digestTitle" required maxlength="300" placeholder="e.g. Tuesday, Nov 10 — two replies, one deadline" /></label>
+        <label>Date <input id="digestDate" type="date" /></label>
+        <label>Body (markdown) <textarea id="digestBody" rows="8" required placeholder="## Headlines&#10;- What happened, what is due, what needs her."></textarea></label>
+        <p class="form-error" id="digestError"></p>
+        <button type="submit" class="btn btn-primary">Post digest</button>
+      </form>
+    </section>
+
+    <!-- ============ AGENTS ============ -->
+    <section id="view-agents" class="view hidden">
+      <div class="card prose">
+        <h2>Agents</h2>
+        <p><strong>What this is.</strong> JesutofunmiOS is Jesutofunmi Adewole's personal project-management board. She is the owner and the decision-maker. The assistants who work here are <strong>Nayden</strong> (her main agent, who runs this board), <strong>Claude</strong>, <strong>ChatGPT</strong> and <strong>Instinct</strong>. Tasks on the Board belong to whoever is named in the owner field; a task whose owner is <em>Jesutofunmi</em> is hers alone — never do it for her, and never mark it done.</p>
+        <p><strong>Signing in.</strong> Use the team passcode, which Jesutofunmi gives you directly — it is not written anywhere on this site. After signing in, set <strong>“Acting as”</strong> (in the sidebar) to your own name before you change anything. Every write is recorded in the activity log under that name.</p>
+        <h3>The rules</h3>
+        <ol>
+          <li><strong>Claim before you start.</strong> Set yourself as the task's owner and move it to <em>In Progress</em> before doing the work, so nobody duplicates it.</li>
+          <li><strong>Done means evidenced.</strong> Never mark a task Done without putting evidence in its evidence field — a link, a confirmation message, a submission reference, or an exact quote of the confirmation you received. “Done” with no evidence will be re-opened.</li>
+          <li><strong>Blocked? Say so properly.</strong> Move the task to <em>Waiting on Jesutofunmi</em> and write exactly what you need from her in the details. Do not guess answers she has not given, and do not sit on a blocker silently.</li>
+          <li><strong>Found new work?</strong> Add it as a new task with owner <em>Unassigned</em> and your name will be recorded as its creator. Do not fold new work into an unrelated task.</li>
+          <li><strong>Never delete tasks.</strong> There is no delete here on purpose. If something is obsolete, move it to Done only if it genuinely happened, or set it Waiting and explain.</li>
+          <li><strong>Respect the standing rules in task details.</strong> Many tasks carry constraints (for example: applications she must file herself, drafts that may not be sent without her approval). The details field is authoritative — read the whole task before acting.</li>
+          <li><strong>Assessments, interviews and coursework are hers.</strong> If a task is one of those, your job is at most to remind or prepare logistics — never to complete it.</li>
+        </ol>
+        <h3>How the board is organised</h3>
+        <ul>
+          <li><strong>Today</strong> — Nayden's latest digest, what is due now, and recent activity.</li>
+          <li><strong>Board</strong> — To Do / In Progress / Waiting on Jesutofunmi / Done.</li>
+          <li><strong>Deadlines</strong> — the dated commitments. If you learn a new deadline, add it.</li>
+          <li><strong>Reports</strong> — one daily report per person. See “Daily reports” below.</li>
+          <li><strong>Digests</strong> — the morning briefings archive. Only post a digest if you are Nayden or Jesutofunmi asked you to.</li>
+        </ul>
+        <h3>Report what you learn</h3>
+        <p><strong>This board is the team's shared memory.</strong> Anything you learn while working with Jesutofunmi that Nayden cannot see — a deadline mentioned in your conversation, work completed, a plan changed, a new fact about her projects — goes on the board, put there by whoever learned it, the same day.</p>
+        <ul>
+          <li><strong>Deadlines</strong> go to Deadlines, with the date.</li>
+          <li><strong>Finished or ongoing work</strong> goes on the Board as a task, with the evidence on the card.</li>
+          <li><strong>Anything that fits neither</strong> goes in a short Digest post titled with the date, so the morning sync can file it properly.</li>
+        </ul>
+        <p>Jesutofunmi adds things the same way when she has context nobody else does — there is no separate process for her. The rule of thumb: if it happened outside Nayden's view, it goes on the board.</p>
+        <h3>Daily reports</h3>
+        <p><strong>At the end of any day you did work, post your report for that day</strong> — what was done, what is blocked, and what you learned — under your own name, in the Reports view. One report per person per day; if the day is not finished, post what there is and update it later.</p>
+        <p>Jesutofunmi's report is the one exception to posting your own: she gives hers to Instinct, who posts it under her name. Nayden reads every report each morning, and the morning brief is the aggregation of them. A report is how work becomes visible to the whole team — if it is not reported, it may as well not have happened.</p>
+        <p class="muted">When in doubt, leave a task Waiting with a clear note rather than improvising. A precise question beats a confident mistake.</p>
+      </div>
+    </section>
+    </main>
+  </div>
+</div>
+
+<!-- ============ TASK EDITOR ============ -->
+<div id="taskModal" class="modal hidden">
+  <form id="taskForm" class="modal-card">
+    <div class="modal-head">
+      <h2 id="taskFormTitle">New task</h2>
+      <button type="button" class="btn btn-ghost btn-small" data-close="taskModal">&#10005;</button>
+    </div>
+    <input type="hidden" id="taskId" />
+    <label>Title <input id="taskTitle" required maxlength="300" /></label>
+    <label>Details <textarea id="taskDetails" rows="5"></textarea></label>
+    <div class="form-row">
+      <label>Owner
+        <select id="taskOwner">
+          <option>Jesutofunmi</option>
+          <option>Nayden</option>
+          <option>Claude</option>
+          <option>ChatGPT</option>
+          <option>Instinct</option>
+          <option>Unassigned</option>
+        </select>
+      </label>
+      <label>Status
+        <select id="taskStatus">
+          <option value="todo">To Do</option>
+          <option value="doing">In Progress</option>
+          <option value="waiting">Waiting on Jesutofunmi</option>
+          <option value="done">Done</option>
+        </select>
+      </label>
+      <label>Due <input id="taskDue" type="date" /></label>
+    </div>
+    <label>Evidence (required to call it done) <input id="taskEvidence" maxlength="2000" placeholder="Link, confirmation wording, or reference" /></label>
+    <p class="form-error" id="taskError"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" data-close="taskModal">Cancel</button>
+      <button type="submit" class="btn btn-primary">Save task</button>
+    </div>
+  </form>
+</div>
+
+<!-- ============ DEADLINE EDITOR ============ -->
+<div id="deadlineModal" class="modal hidden">
+  <form id="deadlineForm" class="modal-card">
+    <div class="modal-head">
+      <h2 id="deadlineFormTitle">Add deadline</h2>
+      <button type="button" class="btn btn-ghost btn-small" data-close="deadlineModal">&#10005;</button>
+    </div>
+    <input type="hidden" id="deadlineId" />
+    <label>Title <input id="deadlineTitle" required maxlength="300" /></label>
+    <div class="form-row">
+      <label>Date <input id="deadlineDate" type="date" required /></label>
+      <label>Owner
+        <select id="deadlineOwner">
+          <option>Jesutofunmi</option>
+          <option>Nayden</option>
+          <option>Claude</option>
+          <option>ChatGPT</option>
+          <option>Instinct</option>
+          <option>Unassigned</option>
+        </select>
+      </label>
+    </div>
+    <label>Notes <textarea id="deadlineNotes" rows="3"></textarea></label>
+    <p class="form-error" id="deadlineError"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" data-close="deadlineModal">Cancel</button>
+      <button type="submit" class="btn btn-primary">Save deadline</button>
+    </div>
+  </form>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

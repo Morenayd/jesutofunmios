@@ -1,0 +1,22 @@
+# Life HQ — Cloudflare Pages configuration
+# Docs: https://developers.cloudflare.com/pages/configuration/wrangler-configuration/
+
+name = "jesutofunmios"
+pages_build_output_dir = "public"
+compatibility_date = "2024-11-01"
+
+# D1 database binding. The Functions code expects the binding name "DB".
+# Create the database first:  wrangler d1 create life-hq
+# then paste the returned database_id below (replace the placeholder).
+[[d1_databases]]
+binding = "DB"
+database_name = "life-hq"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+# REQUIRED SECRET — do NOT put a real passcode in this file.
+# The shared team passcode is read from the environment variable TEAM_PASSCODE.
+# Set it before deploying:
+#   wrangler pages secret put TEAM_PASSCODE --project-name life-hq
+# or in the Cloudflare dashboard: Pages project -> Settings -> Environment variables
+# (add it as an encrypted secret for the Production environment).
+# For local development, put TEAM_PASSCODE in a .dev.vars file (gitignored).

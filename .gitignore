@@ -1,0 +1,6 @@
+.dev.vars
+.wrangler/
+node_modules/
+*.zip
+worker-chunk-*.txt
+deploy*.zip
