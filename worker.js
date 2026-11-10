@@ -1431,7 +1431,6 @@ main {
 .brief-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
 .brief-label { font-size: 0.98rem; font-weight: 700; }
 .brief-meta { color: rgba(255, 255, 255, 0.62); font-size: 0.82rem; white-space: nowrap; }
-.brief-title { margin: 0.85rem 0 0.3rem; font-size: 1.14rem; font-weight: 700; line-height: 1.3; color: #fff; }
 .brief-body { color: rgba(255, 255, 255, 0.9); font-size: 0.94rem; max-height: 330px; overflow-y: auto; padding-right: 0.3rem; }
 .brief-body h2, .brief-body h3, .brief-body h4 { color: #fff; font-weight: 700; }
 .brief-body a { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
@@ -1705,8 +1704,11 @@ main {
 }
 .cal-cell.out { background: transparent; }
 .cal-cell.out .cal-num { color: var(--muted); opacity: 0.55; }
-.cal-cell.has-deadline { cursor: pointer; }
+.cal-cell { cursor: pointer; }
+.cal-cell:hover { border-color: #cfcfbc; }
 .cal-cell.has-deadline:hover { border-color: var(--caramel); }
+.cal-cell.selected { border-color: var(--green); box-shadow: inset 0 0 0 1px var(--green); }
+.cal-cell.selected:hover { border-color: var(--green); }
 .cal-cell-top { display: flex; align-items: center; gap: 0.35rem; }
 .cal-num {
   display: inline-flex;
@@ -1736,6 +1738,20 @@ main {
   text-overflow: ellipsis;
 }
 .cal-more { font-size: 0.68rem; color: var(--muted); }
+.cal-day { margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.cal-day-title { font-size: 1rem; font-weight: 800; letter-spacing: -0.01em; margin-bottom: 0.35rem; }
+.cal-day-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.cal-day-row:last-child { border-bottom: none; }
+.cal-day-row.task { cursor: pointer; }
+.cal-day-row.task:hover .cal-day-name { color: var(--green); }
+.cal-day-name { font-weight: 700; font-size: 0.92rem; }
+.cal-day-notes { color: var(--muted); font-size: 0.82rem; margin-top: 0.1rem; }
 @media (max-width: 700px) {
   .cal-cell { min-height: 58px; padding: 0.35rem; }
   .cal-chips { display: none; }
@@ -2012,7 +2028,6 @@ main {
               <span class="brief-label">Brief</span>
               <span class="brief-meta" id="todayDigestMeta"></span>
             </div>
-            <h2 class="brief-title" id="todayDigestTitle">Latest digest</h2>
             <div id="todayDigestBody" class="markdown brief-body"></div>
           </div>
         </div>
@@ -2138,8 +2153,12 @@ main {
         </div>
         <div class="cal-weekdays" aria-hidden="true"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
         <div class="cal-grid" id="calGrid"></div>
+        <div class="cal-day" id="calDayPanel">
+          <h3 class="cal-day-title" id="calDayTitle"></h3>
+          <div id="calDayItems"></div>
+        </div>
       </div>
-      <p class="muted">A caramel chip is a deadline — click the day to jump to it in Deadlines. Green dots are open tasks due that day.</p>
+      <p class="muted">A caramel chip is a deadline, green dots are open tasks due that day — click any day to see its detail right here.</p>
     </section>
 
     <!-- ============ DEADLINES ============ -->
@@ -2649,7 +2668,7 @@ function dueChip(task) {
 
 // Jump to a date in the Deadlines view, flashing its rows — or landing
 // on the nearest deadline when the day itself has none. Used by the
-// Today Deadlines card and the Calendar view.
+// Today Deadlines card. (The Calendar view renders day detail in place.)
 function gotoDeadlineDate(iso) {
   showView('deadlines');
   const rows = [...document.querySelectorAll('#deadlineList .deadline-row')];
@@ -2694,14 +2713,14 @@ function renderToday() {
   const monthName = now.toLocaleDateString('en-US', { month: 'short' });
   $('#todayEyebrow').textContent = \`\${weekday}, \${monthName} \${now.getDate()}\`;
 
-  // The Brief: the latest digest, white on deep green.
+  // The Brief: the latest digest, white on deep green. The digest's
+  // title is an internal label only — the panel shows the Brief label,
+  // the date · author meta, and the body. No headline.
   const digest = state.latestDigest;
   if (digest) {
-    $('#todayDigestTitle').textContent = digest.title;
     $('#todayDigestMeta').textContent = \`\${fmtDate(digest.date)} · by \${digest.created_by || 'Nayden'}\`;
     $('#todayDigestBody').innerHTML = renderMarkdown(digest.body);
   } else {
-    $('#todayDigestTitle').textContent = 'No digest yet';
     $('#todayDigestMeta').textContent = '';
     $('#todayDigestBody').innerHTML = '<p class="muted">The first brief will appear here.</p>';
   }
@@ -3030,6 +3049,7 @@ $('#todayDeadlines').addEventListener('click', (e) => {
 /* ================= calendar ================= */
 
 let calOffset = 0; // months away from the current month
+let calSelected = null; // iso of the day whose detail shows under the grid
 
 function renderCalendar() {
   if (!state) return;
@@ -3039,6 +3059,16 @@ function renderCalendar() {
   const year = base.getFullYear();
   const month = base.getMonth();
   $('#calTitle').textContent = base.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  // Selection: keep it while it sits in the shown month; otherwise fall
+  // back to today (current month) or the 1st of the shown month, so the
+  // detail panel below never goes stale.
+  const monthPrefix = \`\${year}-\${String(month + 1).padStart(2, '0')}\`;
+  if (!calSelected || !calSelected.startsWith(monthPrefix)) {
+    const nowDate = new Date();
+    const isCurrentMonth = year === nowDate.getFullYear() && month === nowDate.getMonth();
+    calSelected = isCurrentMonth ? todayStr() : \`\${monthPrefix}-01\`;
+  }
 
   const dlByDate = {};
   (state.deadlines || []).forEach((d) => { (dlByDate[d.date] = dlByDate[d.date] || []).push(d); });
@@ -3062,23 +3092,59 @@ function renderCalendar() {
     const dots = tks.length
       ? \`<span class="cal-dots">\${'<i></i>'.repeat(Math.min(3, tks.length))}</span>\`
       : '';
-    const label = \`\${fmtDate(iso)}\${dls.length ? \` — \${dls.length} deadline\${dls.length > 1 ? 's' : ''}\` : ''}\`;
-    html += \`<div class="cal-cell\${inMonth ? '' : ' out'}\${iso === todayStr() ? ' is-today' : ''}\${dls.length ? ' has-deadline' : ''}"\${dls.length ? \` data-cal-date="\${iso}" role="button" tabindex="0" aria-label="\${esc(label)}" title="\${esc(label)}"\` : ''}>
+    const label = \`\${fmtDate(iso)}\${dls.length ? \` — \${dls.length} deadline\${dls.length > 1 ? 's' : ''}\` : ''}\${tks.length ? \` — \${tks.length} open task\${tks.length > 1 ? 's' : ''} due\` : ''}\`;
+    html += \`<div class="cal-cell\${inMonth ? '' : ' out'}\${iso === todayStr() ? ' is-today' : ''}\${dls.length ? ' has-deadline' : ''}\${iso === calSelected ? ' selected' : ''}" data-cal-date="\${iso}" role="button" tabindex="0" aria-label="\${esc(label)}" title="\${esc(label)}">
       <div class="cal-cell-top"><span class="cal-num">\${d.getDate()}</span>\${dots}</div>
       \${chips ? \`<div class="cal-chips">\${chips}</div>\` : ''}
     </div>\`;
   }
   $('#calGrid').innerHTML = html;
+  renderCalDayDetail();
+}
+
+// The selected day's deadlines and open tasks, rendered in place under
+// the grid. Task rows reuse the shared [data-open-task] editor handler.
+function renderCalDayDetail() {
+  const iso = calSelected || todayStr();
+  $('#calDayTitle').textContent = parseDay(iso).toLocaleDateString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric',
+  });
+  const dls = (state.deadlines || []).filter((d) => d.date === iso);
+  const tks = (state.tasks || []).filter((t) => t.due === iso && t.status !== 'done');
+  const rows = [
+    ...dls.map((d) => \`
+      <div class="cal-day-row">
+        <div class="grow">
+          <div class="cal-day-name">\${esc(d.title)}</div>
+          \${d.notes ? \`<div class="cal-day-notes">\${esc(d.notes)}</div>\` : ''}
+        </div>
+        \${ownerChip(d.owner)}\${relChip(d)}
+      </div>\`),
+    ...tks.map((t) => \`
+      <div class="cal-day-row task" data-open-task="\${t.id}" role="button" tabindex="0">
+        <div class="grow"><div class="cal-day-name">\${esc(t.title)}</div></div>
+        \${ownerChip(t.owner)}\${dueChip(t)}
+      </div>\`),
+  ];
+  $('#calDayItems').innerHTML = rows.length ? rows.join('') : '<p class="muted">Nothing on this day.</p>';
+}
+
+function selectCalDay(iso) {
+  calSelected = iso;
+  document.querySelectorAll('#calGrid .cal-cell').forEach((c) => {
+    c.classList.toggle('selected', c.dataset.calDate === iso);
+  });
+  renderCalDayDetail();
 }
 
 $('#calGrid').addEventListener('click', (e) => {
   const cell = e.target.closest('[data-cal-date]');
-  if (cell) gotoDeadlineDate(cell.dataset.calDate);
+  if (cell) selectCalDay(cell.dataset.calDate);
 });
 $('#calGrid').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
   const cell = e.target.closest('[data-cal-date]');
-  if (cell) { e.preventDefault(); gotoDeadlineDate(cell.dataset.calDate); }
+  if (cell) { e.preventDefault(); selectCalDay(cell.dataset.calDate); }
 });
 $('#calPrev').addEventListener('click', () => { calOffset -= 1; renderCalendar(); });
 $('#calNext').addEventListener('click', () => { calOffset += 1; renderCalendar(); });
