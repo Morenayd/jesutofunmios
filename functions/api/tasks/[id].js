@@ -1,6 +1,8 @@
 // PATCH /api/tasks/:id — partial update.
 // Body may include any of: title, details, owner, status, due, evidence, actor.
 // Writes an activity row: 'status_changed' when the status moved, else 'updated'.
+// DELETE /api/tasks/:id — remove a task (e.g. a mis-categorised record,
+// such as a class that belongs in Events).
 import {
   cleanStr,
   err,
@@ -77,4 +79,19 @@ export async function onRequestPatch({ request, env, params }) {
 
   const task = await env.DB.prepare('SELECT * FROM tasks WHERE id = ?').bind(id).first();
   return json({ task });
+}
+
+export async function onRequestDelete({ request, env, params }) {
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) return err('Invalid task id.', 400);
+
+  const existing = await env.DB.prepare('SELECT * FROM tasks WHERE id = ?').bind(id).first();
+  if (!existing) return err('Task not found.', 404);
+
+  await env.DB.prepare('DELETE FROM tasks WHERE id = ?').bind(id).run();
+
+  const actor = getActor(request, null);
+  await writeActivity(env, { actor, action: 'deleted', note: existing.title });
+
+  return json({ deleted: id });
 }

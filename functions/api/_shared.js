@@ -358,3 +358,26 @@ export async function ensurePeopleTable(env) {
     );
   }
 }
+
+// Events: classes and sessions — the day's fixed appointments. An event
+// is schedule only: it renders in the Schedule card and in day detail,
+// and it is never a task and never a deadline. `time` is free text
+// exactly as given (e.g. "18:00–20:00 CT"); it may be empty.
+export const EVENTS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  date       TEXT NOT NULL,
+  title      TEXT NOT NULL,
+  time       TEXT NOT NULL DEFAULT '',
+  notes      TEXT NOT NULL DEFAULT '',
+  created_by TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)`;
+
+export async function ensureEventsTable(env) {
+  if (!env || !env.DB) return;
+  await env.DB.batch([
+    env.DB.prepare(EVENTS_TABLE_SQL),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_events_date ON events(date)'),
+  ]);
+}

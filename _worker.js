@@ -362,6 +362,29 @@ async function ensurePeopleTable(env) {
   }
 }
 
+// Events: classes and sessions — the day's fixed appointments. An event
+// is schedule only: it renders in the Schedule card and in day detail,
+// and it is never a task and never a deadline. `time` is free text
+// exactly as given (e.g. "18:00–20:00 CT"); it may be empty.
+const EVENTS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  date       TEXT NOT NULL,
+  title      TEXT NOT NULL,
+  time       TEXT NOT NULL DEFAULT '',
+  notes      TEXT NOT NULL DEFAULT '',
+  created_by TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)`;
+
+async function ensureEventsTable(env) {
+  if (!env || !env.DB) return;
+  await env.DB.batch([
+    env.DB.prepare(EVENTS_TABLE_SQL),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_events_date ON events(date)'),
+  ]);
+}
+
 // ---- ./functions/api/auth.js ----
 // POST /api/auth — body { passcode, actor }
 // On a passcode match, sets an HttpOnly session cookie whose value is a
@@ -413,7 +436,7 @@ async function hLogoutPost() {
 // open tasks + latest 50 done, latest digest in full, digest index,
 // deadlines sorted by date, latest 30 activity rows, every daily
 // report from the last 7 days, all projects, all targets, the latest
-// 50 captures, and all people.
+// 50 captures, all people, and events from the last 7 days onward.
 
 async function hStateGet({ env }) {
   await ensureReportsTable(env);
@@ -421,6 +444,7 @@ async function hStateGet({ env }) {
   await ensureTargetsTable(env);
   await ensureCapturesTable(env);
   await ensurePeopleTable(env);
+  await ensureEventsTable(env);
 
   const open = await env.DB.prepare(
     `SELECT * FROM tasks WHERE status != 'done'
@@ -480,6 +504,16 @@ async function hStateGet({ env }) {
   // People: shortlist order (seeded order), oldest first.
   const people = await env.DB.prepare('SELECT * FROM people ORDER BY id ASC').all();
 
+  // Events: classes and sessions, from 7 days ago onward, date order,
+  // capped at 60 — enough for Today, the week strip and the calendar
+  // without shipping the whole history.
+  const eventsStart = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  const events = await env.DB.prepare(
+    'SELECT * FROM events WHERE date >= ? ORDER BY date ASC, id ASC LIMIT 60'
+  )
+    .bind(eventsStart)
+    .all();
+
   return json({
     tasks: [...(open.results || []), ...(done.results || [])],
     latestDigest: latestDigest || null,
@@ -491,6 +525,7 @@ async function hStateGet({ env }) {
     targets: targets.results || [],
     captures: captures.results || [],
     people: people.results || [],
+    events: events.results || [],
   });
 }
 
@@ -546,6 +581,8 @@ async function hTasksPost({ request, env }) {
 // PATCH /api/tasks/:id — partial update.
 // Body may include any of: title, details, owner, status, due, evidence, actor.
 // Writes an activity row: 'status_changed' when the status moved, else 'updated'.
+// DELETE /api/tasks/:id — remove a task (e.g. a mis-categorised record,
+// such as a class that belongs in Events).
 
 async function hTaskPatch({ request, env, params }) {
   const id = Number(params.id);
@@ -610,6 +647,21 @@ async function hTaskPatch({ request, env, params }) {
 
   const task = await env.DB.prepare('SELECT * FROM tasks WHERE id = ?').bind(id).first();
   return json({ task });
+}
+
+async function hTaskDelete({ request, env, params }) {
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) return err('Invalid task id.', 400);
+
+  const existing = await env.DB.prepare('SELECT * FROM tasks WHERE id = ?').bind(id).first();
+  if (!existing) return err('Task not found.', 404);
+
+  await env.DB.prepare('DELETE FROM tasks WHERE id = ?').bind(id).run();
+
+  const actor = getActor(request, null);
+  await writeActivity(env, { actor, action: 'deleted', note: existing.title });
+
+  return json({ deleted: id });
 }
 
 // ---- ./functions/api/digests.js ----
@@ -693,6 +745,8 @@ async function hDeadlinesPost({ request, env }) {
 
 // ---- ./functions/api/deadlines/[id].js ----
 // PATCH /api/deadlines/:id — partial update of title, date, notes, owner.
+// DELETE /api/deadlines/:id — remove a deadline (e.g. a mis-categorised
+// record, such as a class that belongs in Events).
 
 async function hDeadlinePatch({ request, env, params }) {
   const id = Number(params.id);
@@ -732,6 +786,21 @@ async function hDeadlinePatch({ request, env, params }) {
 
   const deadline = await env.DB.prepare('SELECT * FROM deadlines WHERE id = ?').bind(id).first();
   return json({ deadline });
+}
+
+async function hDeadlineDelete({ request, env, params }) {
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) return err('Invalid deadline id.', 400);
+
+  const existing = await env.DB.prepare('SELECT * FROM deadlines WHERE id = ?').bind(id).first();
+  if (!existing) return err('Deadline not found.', 404);
+
+  await env.DB.prepare('DELETE FROM deadlines WHERE id = ?').bind(id).run();
+
+  const actor = getActor(request, null);
+  await writeActivity(env, { actor, action: 'deadline_deleted', note: `${existing.title} (${existing.date})` });
+
+  return json({ deleted: id });
 }
 
 // ---- ./functions/api/reports.js ----
@@ -1095,6 +1164,82 @@ async function hPersonPatch({ request, env, params }) {
 
   const person = await env.DB.prepare('SELECT * FROM people WHERE id = ?').bind(id).first();
   return json({ person });
+}
+
+// ---- ./functions/api/events.js ----
+// POST /api/events — add an event (a class or session: schedule only,
+// never a task, never a deadline).
+// Body: { date (required), title (required), time, notes, actor }
+
+async function hEventsPost({ request, env }) {
+  await ensureEventsTable(env);
+
+  const body = await parseBody(request);
+  if (!body) return err('Body must be valid JSON.', 400);
+
+  const date = validDate(body.date);
+  if (date === undefined || date === null) return err('date must be an ISO date (YYYY-MM-DD).', 400);
+
+  const title = cleanStr(body.title, 300).trim();
+  if (!title) return err('title is required.', 400);
+
+  const actor = getActor(request, body);
+  const ts = nowISO();
+  const result = await env.DB.prepare(
+    'INSERT INTO events (date, title, time, notes, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  )
+    .bind(date, title, cleanStr(body.time, 100), cleanStr(body.notes, 2000), actor, ts, ts)
+    .run();
+
+  await writeActivity(env, { actor, action: 'event_added', note: `${title} (${date})` });
+
+  const event = await env.DB.prepare('SELECT * FROM events WHERE id = ?')
+    .bind(result.meta.last_row_id)
+    .first();
+  return json({ event }, 201);
+}
+
+// ---- ./functions/api/events/[id].js ----
+// PATCH /api/events/:id — partial update of date, title, time and notes.
+
+async function hEventPatch({ request, env, params }) {
+  await ensureEventsTable(env);
+
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) return err('Invalid event id.', 400);
+
+  const existing = await env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(id).first();
+  if (!existing) return err('Event not found.', 404);
+
+  const body = await parseBody(request);
+  if (!body) return err('Body must be valid JSON.', 400);
+
+  const next = { ...existing };
+
+  if ('date' in body) {
+    const date = validDate(body.date);
+    if (date === undefined || date === null) return err('date must be an ISO date (YYYY-MM-DD).', 400);
+    next.date = date;
+  }
+  if ('title' in body) {
+    const title = cleanStr(body.title, 300).trim();
+    if (!title) return err('title cannot be empty.', 400);
+    next.title = title;
+  }
+  if ('time' in body) next.time = cleanStr(body.time, 100);
+  if ('notes' in body) next.notes = cleanStr(body.notes, 2000);
+
+  await env.DB.prepare(
+    'UPDATE events SET date = ?, title = ?, time = ?, notes = ?, updated_at = ? WHERE id = ?'
+  )
+    .bind(next.date, next.title, next.time, next.notes, nowISO(), id)
+    .run();
+
+  const actor = getActor(request, body);
+  await writeActivity(env, { actor, action: 'event_updated', note: `${next.title} (${next.date})` });
+
+  const event = await env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(id).first();
+  return json({ event });
 }
 
 const INDEX_HTML = `<!doctype html>
@@ -1629,6 +1774,8 @@ main {
 .rel-rose { background: var(--rose-bg); color: var(--red); }
 .rel-butter { background: var(--butter); color: #6e5410; }
 .rel-grey { background: var(--panel); color: var(--ink-soft); }
+.sched-chip { background: var(--sage); color: var(--deep); }
+.event-time { background: var(--paper); color: var(--ink-soft); }
 .status-active { background: var(--sage); color: var(--deep); }
 .status-paused { background: var(--butter); color: #6e5410; }
 .status-done { background: var(--panel); color: var(--muted); }
@@ -1786,6 +1933,13 @@ main {
   border-bottom: 1px solid var(--line-soft);
 }
 .cal-day-row:last-child { border-bottom: none; }
+.cal-day-row.event {
+  background: var(--sage-soft);
+  border-left: 3px solid var(--green);
+  border-radius: 8px;
+  padding-left: 0.6rem;
+  padding-right: 0.6rem;
+}
 .cal-day-row.task { cursor: pointer; }
 .cal-day-row.task:hover .cal-day-name { color: var(--green); }
 .cal-day-name { font-weight: 700; font-size: 0.92rem; }
@@ -2302,8 +2456,9 @@ main {
           <li><strong>Today</strong> — the morning brief, the Deadlines card, the monthly target, then the day's Tasks and Schedule.</li>
           <li><strong>Inbox</strong> — raw captures: notes, links, half-formed thoughts, dropped by anyone. Nayden triages them in the morning sync and marks them filed.</li>
           <li><strong>My tasks</strong> — the board: To Do / In Progress / Waiting on Jesutofunmi / Done.</li>
-          <li><strong>Calendar</strong> — deadlines and task due dates on a month grid.</li>
+          <li><strong>Calendar</strong> — events, deadlines and task due dates on a month grid.</li>
           <li><strong>Deadlines</strong> — the dated commitments. If you learn a new deadline, add it.</li>
+          <li><strong>Events</strong> — classes and sessions, with their times. Schedule only: an event is never a task and never a deadline.</li>
           <li><strong>Projects</strong> — the standing areas of work, and the monthly target shown on Today. Projects are their own section; tasks are not filed under them.</li>
           <li><strong>Reports</strong> — one daily report per person. See &ldquo;Daily reports&rdquo; below.</li>
           <li><strong>Follow-ups</strong> — the people Jesutofunmi is keeping in touch with, with the next step for each. If you learn someone should be contacted, add them here.</li>
@@ -2313,6 +2468,7 @@ main {
         <p><strong>This board is the team's shared memory.</strong> Anything you learn while working with Jesutofunmi that Nayden cannot see — a deadline mentioned in your conversation, work completed, a plan changed, a new fact about her projects — goes on the board, put there by whoever learned it, the same day.</p>
         <ul>
           <li><strong>Deadlines</strong> go to Deadlines, with the date.</li>
+          <li><strong>Classes and sessions</strong> go to Events, with the date and time. Schedule only — never add them as tasks or deadlines.</li>
           <li><strong>Finished or ongoing work</strong> goes on the board as a task, with the evidence on the card.</li>
           <li><strong>A person to contact</strong> goes to Follow-ups, with the next step.</li>
           <li><strong>Anything that fits none of these</strong> — a note, a link, a half-formed thought — goes in the Inbox as a capture.</li>
@@ -2833,10 +2989,12 @@ function renderToday() {
 }
 
 /* ---------- schedule card ----------
-   Today's dated items: deadlines due today and open tasks due today, as
-   tinted blocks. The time gutter is honest: a time shows only when the
-   item itself carries one in its title or notes (e.g. a session whose
-   notes hold "6:00–8:00 PM CT") — never an invented one. */
+   Today's schedule: events first (the day's fixed appointments —
+   classes and sessions), then deadlines due today, then open tasks due
+   today, as tinted blocks. The time gutter is honest: a time shows only
+   when the item itself carries one (an event's time field, or a time in
+   a deadline/task title or notes, e.g. "6:00–8:00 PM CT") — never an
+   invented one. */
 
 function extractTime(text) {
   if (!text) return null;
@@ -2876,20 +3034,30 @@ function stripTimes(text) {
 function renderSchedule() {
   const t = todayStr();
   const items = [];
+  // Events first: classes and sessions are the day's fixed appointments.
+  (state.events || []).filter((e) => e.date === t).forEach((e) => {
+    const time = extractTime(e.time || '');
+    const rest = stripTimes(e.notes || '');
+    items.push({ group: 0, title: e.title, sub: rest || 'Scheduled', time });
+  });
   (state.deadlines || []).filter((d) => d.date === t).forEach((d) => {
     const time = extractTime(\`\${d.title} \${d.notes || ''}\`);
     const rest = stripTimes(d.notes || '');
-    items.push({ title: d.title, sub: rest || \`Deadline · \${d.owner}\`, time });
+    items.push({ group: 1, title: d.title, sub: rest || \`Deadline · \${d.owner}\`, time });
   });
   (state.tasks || []).filter((x) => x.status !== 'done' && x.due === t).forEach((x) => {
     const time = extractTime(\`\${x.title} \${x.details || ''}\`);
     items.push({
+      group: 2,
       title: x.title,
       sub: \`Task · \${x.owner}\${x.status === 'waiting' ? ' · waiting on you' : ''}\`,
       time,
     });
   });
+  // Group order first (events, deadlines, tasks); within a group, timed
+  // items first in time order, untimed last.
   items.sort((a, b) => {
+    if (a.group !== b.group) return a.group - b.group;
     if (a.time && b.time) return a.time.minutes - b.time.minutes;
     if (a.time) return -1;
     if (b.time) return 1;
@@ -2936,10 +3104,11 @@ function renderWeekStrip() {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     const iso = isoOf(d);
+    const evCount = (state.events || []).filter((x) => x.date === iso).length;
     const dlCount = (state.deadlines || []).filter((x) => x.date === iso).length;
     const tkCount = (state.tasks || []).filter((x) => x.due === iso && x.status !== 'done').length;
-    const label = \`\${fmtDate(iso)}\${dlCount ? \` — \${dlCount} deadline\${dlCount > 1 ? 's' : ''}\` : ''}\${tkCount ? \` — \${tkCount} open task\${tkCount > 1 ? 's' : ''} due\` : ''}\`;
-    html += \`<button type="button" class="week-day\${iso === today ? ' is-today' : ''}\${iso === weekSelected ? ' selected' : ''}" data-week-date="\${iso}" aria-label="\${esc(label)}" title="\${esc(label)}"><span class="week-letter">\${letters[i]}</span><span class="week-num">\${d.getDate()}</span><span class="week-dot\${dlCount || tkCount ? '' : ' empty'}" aria-hidden="true"></span></button>\`;
+    const label = \`\${fmtDate(iso)}\${evCount ? \` — \${evCount} event\${evCount > 1 ? 's' : ''}\` : ''}\${dlCount ? \` — \${dlCount} deadline\${dlCount > 1 ? 's' : ''}\` : ''}\${tkCount ? \` — \${tkCount} open task\${tkCount > 1 ? 's' : ''} due\` : ''}\`;
+    html += \`<button type="button" class="week-day\${iso === today ? ' is-today' : ''}\${iso === weekSelected ? ' selected' : ''}" data-week-date="\${iso}" aria-label="\${esc(label)}" title="\${esc(label)}"><span class="week-letter">\${letters[i]}</span><span class="week-num">\${d.getDate()}</span><span class="week-dot\${evCount || dlCount || tkCount ? '' : ' empty'}" aria-hidden="true"></span></button>\`;
   }
   $('#weekStrip').innerHTML = html;
   renderWeekDayDetail();
@@ -3185,6 +3354,8 @@ function renderCalendar() {
   (state.tasks || [])
     .filter((x) => x.due && x.status !== 'done')
     .forEach((x) => { (taskByDate[x.due] = taskByDate[x.due] || []).push(x); });
+  const evByDate = {};
+  (state.events || []).forEach((e) => { (evByDate[e.date] = evByDate[e.date] || []).push(e); });
 
   const start = new Date(year, month, 1 - new Date(year, month, 1).getDay());
   let html = '';
@@ -3195,13 +3366,17 @@ function renderCalendar() {
     const inMonth = d.getMonth() === month;
     const dls = dlByDate[iso] || [];
     const tks = taskByDate[iso] || [];
+    const evs = evByDate[iso] || [];
     const chips = dls.slice(0, 2)
       .map((x) => \`<span class="cal-chip">\${esc(x.title)}</span>\`).join('') +
       (dls.length > 2 ? \`<span class="cal-more">+\${dls.length - 2} more</span>\` : '');
-    const dots = tks.length
-      ? \`<span class="cal-dots">\${'<i></i>'.repeat(Math.min(3, tks.length))}</span>\`
+    // Events share the dots marker with open tasks: a day marker only —
+    // the detail panel below is where events actually render.
+    const dotCount = tks.length + evs.length;
+    const dots = dotCount
+      ? \`<span class="cal-dots">\${'<i></i>'.repeat(Math.min(3, dotCount))}</span>\`
       : '';
-    const label = \`\${fmtDate(iso)}\${dls.length ? \` — \${dls.length} deadline\${dls.length > 1 ? 's' : ''}\` : ''}\${tks.length ? \` — \${tks.length} open task\${tks.length > 1 ? 's' : ''} due\` : ''}\`;
+    const label = \`\${fmtDate(iso)}\${evs.length ? \` — \${evs.length} event\${evs.length > 1 ? 's' : ''}\` : ''}\${dls.length ? \` — \${dls.length} deadline\${dls.length > 1 ? 's' : ''}\` : ''}\${tks.length ? \` — \${tks.length} open task\${tks.length > 1 ? 's' : ''} due\` : ''}\`;
     html += \`<div class="cal-cell\${inMonth ? '' : ' out'}\${iso === todayStr() ? ' is-today' : ''}\${dls.length ? ' has-deadline' : ''}\${iso === calSelected ? ' selected' : ''}" data-cal-date="\${iso}" role="button" tabindex="0" aria-label="\${esc(label)}" title="\${esc(label)}">
       <div class="cal-cell-top"><span class="cal-num">\${d.getDate()}</span>\${dots}</div>
       \${chips ? \`<div class="cal-chips">\${chips}</div>\` : ''}
@@ -3211,14 +3386,24 @@ function renderCalendar() {
   renderCalDayDetail();
 }
 
-// Rows for one day's detail panel — deadlines first, then open tasks
-// due that day. Shared by the Calendar view and Today's week strip.
-// Task rows carry [data-open-task], so the shared editor handler opens
-// them in place.
+// Rows for one day's detail panel — events first (the day's fixed
+// appointments), then deadlines, then open tasks due that day. Shared
+// by the Calendar view and Today's week strip. Event rows are display
+// only: no editor, no click target. Task rows carry [data-open-task],
+// so the shared editor handler opens them in place.
 function dayItemsHtml(iso) {
+  const evs = (state.events || []).filter((e) => e.date === iso);
   const dls = (state.deadlines || []).filter((d) => d.date === iso);
   const tks = (state.tasks || []).filter((t) => t.due === iso && t.status !== 'done');
   const rows = [
+    ...evs.map((e) => \`
+      <div class="cal-day-row event">
+        <div class="grow">
+          <div class="cal-day-name">\${esc(e.title)}</div>
+          \${e.notes ? \`<div class="cal-day-notes">\${esc(e.notes)}</div>\` : ''}
+        </div>
+        \${e.time ? \`<span class="chip event-time">\${esc(e.time)}</span>\` : ''}<span class="chip sched-chip">Schedule</span>
+      </div>\`),
     ...dls.map((d) => \`
       <div class="cal-day-row">
         <div class="grow">
@@ -3236,8 +3421,9 @@ function dayItemsHtml(iso) {
   return rows.length ? rows.join('') : '<p class="muted">Nothing on this day.</p>';
 }
 
-// The selected day's deadlines and open tasks, rendered in place under
-// the grid. Task rows reuse the shared [data-open-task] editor handler.
+// The selected day's events, deadlines and open tasks, rendered in
+// place under the grid. Task rows reuse the shared [data-open-task]
+// editor handler; event rows are display only.
 function renderCalDayDetail() {
   const iso = calSelected || todayStr();
   $('#calDayTitle').textContent = parseDay(iso).toLocaleDateString('en-US', {
@@ -3755,6 +3941,7 @@ export default {
         await ensureTargetsTable(env);
         await ensureCapturesTable(env);
         await ensurePeopleTable(env);
+        await ensureEventsTable(env);
         if (path === '/api/auth') {
           if (request.method !== 'POST') return err('Method not allowed.', 405);
           return await hAuthPost({ request, env });
@@ -3766,10 +3953,12 @@ export default {
         if (path === '/api/state' && request.method === 'GET') return await hStateGet({ request, env });
         if (path === '/api/tasks' && request.method === 'POST') return await hTasksPost({ request, env });
         if ((m = path.match(/^\/api\/tasks\/(\d+)$/)) && request.method === 'PATCH') return await hTaskPatch({ request, env, params: { id: m[1] } });
+        if ((m = path.match(/^\/api\/tasks\/(\d+)$/)) && request.method === 'DELETE') return await hTaskDelete({ request, env, params: { id: m[1] } });
         if (path === '/api/digests' && request.method === 'POST') return await hDigestsPost({ request, env });
         if ((m = path.match(/^\/api\/digests\/(\d+)$/)) && request.method === 'GET') return await hDigestGet({ request, env, params: { id: m[1] } });
         if (path === '/api/deadlines' && request.method === 'POST') return await hDeadlinesPost({ request, env });
         if ((m = path.match(/^\/api\/deadlines\/(\d+)$/)) && request.method === 'PATCH') return await hDeadlinePatch({ request, env, params: { id: m[1] } });
+        if ((m = path.match(/^\/api\/deadlines\/(\d+)$/)) && request.method === 'DELETE') return await hDeadlineDelete({ request, env, params: { id: m[1] } });
         if (path === '/api/reports' && request.method === 'POST') return await hReportsPost({ request, env });
         if (path === '/api/projects' && request.method === 'POST') return await hProjectsPost({ request, env });
         if ((m = path.match(/^\/api\/projects\/(\d+)$/)) && request.method === 'PATCH') return await hProjectPatch({ request, env, params: { id: m[1] } });
@@ -3779,6 +3968,8 @@ export default {
         if ((m = path.match(/^\/api\/captures\/(\d+)$/)) && request.method === 'PATCH') return await hCapturePatch({ request, env, params: { id: m[1] } });
         if (path === '/api/people' && request.method === 'POST') return await hPeoplePost({ request, env });
         if ((m = path.match(/^\/api\/people\/(\d+)$/)) && request.method === 'PATCH') return await hPersonPatch({ request, env, params: { id: m[1] } });
+        if (path === '/api/events' && request.method === 'POST') return await hEventsPost({ request, env });
+        if ((m = path.match(/^\/api\/events\/(\d+)$/)) && request.method === 'PATCH') return await hEventPatch({ request, env, params: { id: m[1] } });
         if (path === '/api/logout' && request.method === 'POST') return await hLogoutPost({ request, env });
         return err('Not found.', 404);
       } catch (e) {

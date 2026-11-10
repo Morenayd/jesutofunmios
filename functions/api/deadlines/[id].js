@@ -1,4 +1,6 @@
 // PATCH /api/deadlines/:id — partial update of title, date, notes, owner.
+// DELETE /api/deadlines/:id — remove a deadline (e.g. a mis-categorised
+// record, such as a class that belongs in Events).
 import {
   cleanStr,
   err,
@@ -48,4 +50,19 @@ export async function onRequestPatch({ request, env, params }) {
 
   const deadline = await env.DB.prepare('SELECT * FROM deadlines WHERE id = ?').bind(id).first();
   return json({ deadline });
+}
+
+export async function onRequestDelete({ request, env, params }) {
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) return err('Invalid deadline id.', 400);
+
+  const existing = await env.DB.prepare('SELECT * FROM deadlines WHERE id = ?').bind(id).first();
+  if (!existing) return err('Deadline not found.', 404);
+
+  await env.DB.prepare('DELETE FROM deadlines WHERE id = ?').bind(id).run();
+
+  const actor = getActor(request, null);
+  await writeActivity(env, { actor, action: 'deadline_deleted', note: `${existing.title} (${existing.date})` });
+
+  return json({ deleted: id });
 }

@@ -340,10 +340,12 @@ function renderToday() {
 }
 
 /* ---------- schedule card ----------
-   Today's dated items: deadlines due today and open tasks due today, as
-   tinted blocks. The time gutter is honest: a time shows only when the
-   item itself carries one in its title or notes (e.g. a session whose
-   notes hold "6:00–8:00 PM CT") — never an invented one. */
+   Today's schedule: events first (the day's fixed appointments —
+   classes and sessions), then deadlines due today, then open tasks due
+   today, as tinted blocks. The time gutter is honest: a time shows only
+   when the item itself carries one (an event's time field, or a time in
+   a deadline/task title or notes, e.g. "6:00–8:00 PM CT") — never an
+   invented one. */
 
 function extractTime(text) {
   if (!text) return null;
@@ -383,20 +385,30 @@ function stripTimes(text) {
 function renderSchedule() {
   const t = todayStr();
   const items = [];
+  // Events first: classes and sessions are the day's fixed appointments.
+  (state.events || []).filter((e) => e.date === t).forEach((e) => {
+    const time = extractTime(e.time || '');
+    const rest = stripTimes(e.notes || '');
+    items.push({ group: 0, title: e.title, sub: rest || 'Scheduled', time });
+  });
   (state.deadlines || []).filter((d) => d.date === t).forEach((d) => {
     const time = extractTime(`${d.title} ${d.notes || ''}`);
     const rest = stripTimes(d.notes || '');
-    items.push({ title: d.title, sub: rest || `Deadline · ${d.owner}`, time });
+    items.push({ group: 1, title: d.title, sub: rest || `Deadline · ${d.owner}`, time });
   });
   (state.tasks || []).filter((x) => x.status !== 'done' && x.due === t).forEach((x) => {
     const time = extractTime(`${x.title} ${x.details || ''}`);
     items.push({
+      group: 2,
       title: x.title,
       sub: `Task · ${x.owner}${x.status === 'waiting' ? ' · waiting on you' : ''}`,
       time,
     });
   });
+  // Group order first (events, deadlines, tasks); within a group, timed
+  // items first in time order, untimed last.
   items.sort((a, b) => {
+    if (a.group !== b.group) return a.group - b.group;
     if (a.time && b.time) return a.time.minutes - b.time.minutes;
     if (a.time) return -1;
     if (b.time) return 1;
@@ -443,10 +455,11 @@ function renderWeekStrip() {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     const iso = isoOf(d);
+    const evCount = (state.events || []).filter((x) => x.date === iso).length;
     const dlCount = (state.deadlines || []).filter((x) => x.date === iso).length;
     const tkCount = (state.tasks || []).filter((x) => x.due === iso && x.status !== 'done').length;
-    const label = `${fmtDate(iso)}${dlCount ? ` — ${dlCount} deadline${dlCount > 1 ? 's' : ''}` : ''}${tkCount ? ` — ${tkCount} open task${tkCount > 1 ? 's' : ''} due` : ''}`;
-    html += `<button type="button" class="week-day${iso === today ? ' is-today' : ''}${iso === weekSelected ? ' selected' : ''}" data-week-date="${iso}" aria-label="${esc(label)}" title="${esc(label)}"><span class="week-letter">${letters[i]}</span><span class="week-num">${d.getDate()}</span><span class="week-dot${dlCount || tkCount ? '' : ' empty'}" aria-hidden="true"></span></button>`;
+    const label = `${fmtDate(iso)}${evCount ? ` — ${evCount} event${evCount > 1 ? 's' : ''}` : ''}${dlCount ? ` — ${dlCount} deadline${dlCount > 1 ? 's' : ''}` : ''}${tkCount ? ` — ${tkCount} open task${tkCount > 1 ? 's' : ''} due` : ''}`;
+    html += `<button type="button" class="week-day${iso === today ? ' is-today' : ''}${iso === weekSelected ? ' selected' : ''}" data-week-date="${iso}" aria-label="${esc(label)}" title="${esc(label)}"><span class="week-letter">${letters[i]}</span><span class="week-num">${d.getDate()}</span><span class="week-dot${evCount || dlCount || tkCount ? '' : ' empty'}" aria-hidden="true"></span></button>`;
   }
   $('#weekStrip').innerHTML = html;
   renderWeekDayDetail();
@@ -692,6 +705,8 @@ function renderCalendar() {
   (state.tasks || [])
     .filter((x) => x.due && x.status !== 'done')
     .forEach((x) => { (taskByDate[x.due] = taskByDate[x.due] || []).push(x); });
+  const evByDate = {};
+  (state.events || []).forEach((e) => { (evByDate[e.date] = evByDate[e.date] || []).push(e); });
 
   const start = new Date(year, month, 1 - new Date(year, month, 1).getDay());
   let html = '';
@@ -702,13 +717,17 @@ function renderCalendar() {
     const inMonth = d.getMonth() === month;
     const dls = dlByDate[iso] || [];
     const tks = taskByDate[iso] || [];
+    const evs = evByDate[iso] || [];
     const chips = dls.slice(0, 2)
       .map((x) => `<span class="cal-chip">${esc(x.title)}</span>`).join('') +
       (dls.length > 2 ? `<span class="cal-more">+${dls.length - 2} more</span>` : '');
-    const dots = tks.length
-      ? `<span class="cal-dots">${'<i></i>'.repeat(Math.min(3, tks.length))}</span>`
+    // Events share the dots marker with open tasks: a day marker only —
+    // the detail panel below is where events actually render.
+    const dotCount = tks.length + evs.length;
+    const dots = dotCount
+      ? `<span class="cal-dots">${'<i></i>'.repeat(Math.min(3, dotCount))}</span>`
       : '';
-    const label = `${fmtDate(iso)}${dls.length ? ` — ${dls.length} deadline${dls.length > 1 ? 's' : ''}` : ''}${tks.length ? ` — ${tks.length} open task${tks.length > 1 ? 's' : ''} due` : ''}`;
+    const label = `${fmtDate(iso)}${evs.length ? ` — ${evs.length} event${evs.length > 1 ? 's' : ''}` : ''}${dls.length ? ` — ${dls.length} deadline${dls.length > 1 ? 's' : ''}` : ''}${tks.length ? ` — ${tks.length} open task${tks.length > 1 ? 's' : ''} due` : ''}`;
     html += `<div class="cal-cell${inMonth ? '' : ' out'}${iso === todayStr() ? ' is-today' : ''}${dls.length ? ' has-deadline' : ''}${iso === calSelected ? ' selected' : ''}" data-cal-date="${iso}" role="button" tabindex="0" aria-label="${esc(label)}" title="${esc(label)}">
       <div class="cal-cell-top"><span class="cal-num">${d.getDate()}</span>${dots}</div>
       ${chips ? `<div class="cal-chips">${chips}</div>` : ''}
@@ -718,14 +737,24 @@ function renderCalendar() {
   renderCalDayDetail();
 }
 
-// Rows for one day's detail panel — deadlines first, then open tasks
-// due that day. Shared by the Calendar view and Today's week strip.
-// Task rows carry [data-open-task], so the shared editor handler opens
-// them in place.
+// Rows for one day's detail panel — events first (the day's fixed
+// appointments), then deadlines, then open tasks due that day. Shared
+// by the Calendar view and Today's week strip. Event rows are display
+// only: no editor, no click target. Task rows carry [data-open-task],
+// so the shared editor handler opens them in place.
 function dayItemsHtml(iso) {
+  const evs = (state.events || []).filter((e) => e.date === iso);
   const dls = (state.deadlines || []).filter((d) => d.date === iso);
   const tks = (state.tasks || []).filter((t) => t.due === iso && t.status !== 'done');
   const rows = [
+    ...evs.map((e) => `
+      <div class="cal-day-row event">
+        <div class="grow">
+          <div class="cal-day-name">${esc(e.title)}</div>
+          ${e.notes ? `<div class="cal-day-notes">${esc(e.notes)}</div>` : ''}
+        </div>
+        ${e.time ? `<span class="chip event-time">${esc(e.time)}</span>` : ''}<span class="chip sched-chip">Schedule</span>
+      </div>`),
     ...dls.map((d) => `
       <div class="cal-day-row">
         <div class="grow">
@@ -743,8 +772,9 @@ function dayItemsHtml(iso) {
   return rows.length ? rows.join('') : '<p class="muted">Nothing on this day.</p>';
 }
 
-// The selected day's deadlines and open tasks, rendered in place under
-// the grid. Task rows reuse the shared [data-open-task] editor handler.
+// The selected day's events, deadlines and open tasks, rendered in
+// place under the grid. Task rows reuse the shared [data-open-task]
+// editor handler; event rows are display only.
 function renderCalDayDetail() {
   const iso = calSelected || todayStr();
   $('#calDayTitle').textContent = parseDay(iso).toLocaleDateString('en-US', {

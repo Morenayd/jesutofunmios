@@ -520,6 +520,8 @@ main {
 .rel-rose { background: var(--rose-bg); color: var(--red); }
 .rel-butter { background: var(--butter); color: #6e5410; }
 .rel-grey { background: var(--panel); color: var(--ink-soft); }
+.sched-chip { background: var(--sage); color: var(--deep); }
+.event-time { background: var(--paper); color: var(--ink-soft); }
 .status-active { background: var(--sage); color: var(--deep); }
 .status-paused { background: var(--butter); color: #6e5410; }
 .status-done { background: var(--panel); color: var(--muted); }
@@ -677,6 +679,13 @@ main {
   border-bottom: 1px solid var(--line-soft);
 }
 .cal-day-row:last-child { border-bottom: none; }
+.cal-day-row.event {
+  background: var(--sage-soft);
+  border-left: 3px solid var(--green);
+  border-radius: 8px;
+  padding-left: 0.6rem;
+  padding-right: 0.6rem;
+}
 .cal-day-row.task { cursor: pointer; }
 .cal-day-row.task:hover .cal-day-name { color: var(--green); }
 .cal-day-name { font-weight: 700; font-size: 0.92rem; }

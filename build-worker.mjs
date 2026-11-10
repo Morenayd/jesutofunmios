@@ -14,34 +14,40 @@ let shared = read('./functions/api/_shared.js');
 shared = shared.replace(/^export /gm, '');
 if (/^export /m.test(shared)) throw new Error('shared still has exports');
 
-// --- handlers: strip imports, rename the exported handler ---
+// --- handlers: strip imports, rename the exported handlers ---
+// Each entry: [file, [[exported name, build name], ...]] — a file may
+// export more than one handler (e.g. PATCH and DELETE on the same route).
 const handlers = [
-  ['./functions/api/auth.js', 'onRequestPost', 'hAuthPost'],
-  ['./functions/api/logout.js', 'onRequestPost', 'hLogoutPost'],
-  ['./functions/api/state.js', 'onRequestGet', 'hStateGet'],
-  ['./functions/api/tasks.js', 'onRequestPost', 'hTasksPost'],
-  ['./functions/api/tasks/[id].js', 'onRequestPatch', 'hTaskPatch'],
-  ['./functions/api/digests.js', 'onRequestPost', 'hDigestsPost'],
-  ['./functions/api/digests/[id].js', 'onRequestGet', 'hDigestGet'],
-  ['./functions/api/deadlines.js', 'onRequestPost', 'hDeadlinesPost'],
-  ['./functions/api/deadlines/[id].js', 'onRequestPatch', 'hDeadlinePatch'],
-  ['./functions/api/reports.js', 'onRequestPost', 'hReportsPost'],
-  ['./functions/api/projects.js', 'onRequestPost', 'hProjectsPost'],
-  ['./functions/api/projects/[id].js', 'onRequestPatch', 'hProjectPatch'],
-  ['./functions/api/targets.js', 'onRequestPost', 'hTargetsPost'],
-  ['./functions/api/targets/[id].js', 'onRequestPatch', 'hTargetPatch'],
-  ['./functions/api/captures.js', 'onRequestPost', 'hCapturesPost'],
-  ['./functions/api/captures/[id].js', 'onRequestPatch', 'hCapturePatch'],
-  ['./functions/api/people.js', 'onRequestPost', 'hPeoplePost'],
-  ['./functions/api/people/[id].js', 'onRequestPatch', 'hPersonPatch'],
+  ['./functions/api/auth.js', [['onRequestPost', 'hAuthPost']]],
+  ['./functions/api/logout.js', [['onRequestPost', 'hLogoutPost']]],
+  ['./functions/api/state.js', [['onRequestGet', 'hStateGet']]],
+  ['./functions/api/tasks.js', [['onRequestPost', 'hTasksPost']]],
+  ['./functions/api/tasks/[id].js', [['onRequestPatch', 'hTaskPatch'], ['onRequestDelete', 'hTaskDelete']]],
+  ['./functions/api/digests.js', [['onRequestPost', 'hDigestsPost']]],
+  ['./functions/api/digests/[id].js', [['onRequestGet', 'hDigestGet']]],
+  ['./functions/api/deadlines.js', [['onRequestPost', 'hDeadlinesPost']]],
+  ['./functions/api/deadlines/[id].js', [['onRequestPatch', 'hDeadlinePatch'], ['onRequestDelete', 'hDeadlineDelete']]],
+  ['./functions/api/reports.js', [['onRequestPost', 'hReportsPost']]],
+  ['./functions/api/projects.js', [['onRequestPost', 'hProjectsPost']]],
+  ['./functions/api/projects/[id].js', [['onRequestPatch', 'hProjectPatch']]],
+  ['./functions/api/targets.js', [['onRequestPost', 'hTargetsPost']]],
+  ['./functions/api/targets/[id].js', [['onRequestPatch', 'hTargetPatch']]],
+  ['./functions/api/captures.js', [['onRequestPost', 'hCapturesPost']]],
+  ['./functions/api/captures/[id].js', [['onRequestPatch', 'hCapturePatch']]],
+  ['./functions/api/people.js', [['onRequestPost', 'hPeoplePost']]],
+  ['./functions/api/people/[id].js', [['onRequestPatch', 'hPersonPatch']]],
+  ['./functions/api/events.js', [['onRequestPost', 'hEventsPost']]],
+  ['./functions/api/events/[id].js', [['onRequestPatch', 'hEventPatch']]],
 ];
 
 let handlerCode = '';
-for (const [path, orig, renamed] of handlers) {
+for (const [path, pairs] of handlers) {
   let code = stripImports(read(path));
-  const needle = `export async function ${orig}`;
-  if (!code.includes(needle)) throw new Error(`${path}: ${needle} not found`);
-  code = code.replace(needle, `async function ${renamed}`);
+  for (const [orig, renamed] of pairs) {
+    const needle = `export async function ${orig}`;
+    if (!code.includes(needle)) throw new Error(`${path}: ${needle} not found`);
+    code = code.replace(needle, `async function ${renamed}`);
+  }
   if (/^export /m.test(code)) throw new Error(`${path}: leftover export`);
   if (/^import /m.test(code)) throw new Error(`${path}: leftover import`);
   handlerCode += `\n// ---- ${path} ----\n` + code.trim() + '\n';
@@ -77,6 +83,7 @@ export default {
         await ensureTargetsTable(env);
         await ensureCapturesTable(env);
         await ensurePeopleTable(env);
+        await ensureEventsTable(env);
         if (path === '/api/auth') {
           if (request.method !== 'POST') return err('Method not allowed.', 405);
           return await hAuthPost({ request, env });
@@ -88,10 +95,12 @@ export default {
         if (path === '/api/state' && request.method === 'GET') return await hStateGet({ request, env });
         if (path === '/api/tasks' && request.method === 'POST') return await hTasksPost({ request, env });
         if ((m = path.match(/^\\/api\\/tasks\\/(\\d+)$/)) && request.method === 'PATCH') return await hTaskPatch({ request, env, params: { id: m[1] } });
+        if ((m = path.match(/^\\/api\\/tasks\\/(\\d+)$/)) && request.method === 'DELETE') return await hTaskDelete({ request, env, params: { id: m[1] } });
         if (path === '/api/digests' && request.method === 'POST') return await hDigestsPost({ request, env });
         if ((m = path.match(/^\\/api\\/digests\\/(\\d+)$/)) && request.method === 'GET') return await hDigestGet({ request, env, params: { id: m[1] } });
         if (path === '/api/deadlines' && request.method === 'POST') return await hDeadlinesPost({ request, env });
         if ((m = path.match(/^\\/api\\/deadlines\\/(\\d+)$/)) && request.method === 'PATCH') return await hDeadlinePatch({ request, env, params: { id: m[1] } });
+        if ((m = path.match(/^\\/api\\/deadlines\\/(\\d+)$/)) && request.method === 'DELETE') return await hDeadlineDelete({ request, env, params: { id: m[1] } });
         if (path === '/api/reports' && request.method === 'POST') return await hReportsPost({ request, env });
         if (path === '/api/projects' && request.method === 'POST') return await hProjectsPost({ request, env });
         if ((m = path.match(/^\\/api\\/projects\\/(\\d+)$/)) && request.method === 'PATCH') return await hProjectPatch({ request, env, params: { id: m[1] } });
@@ -101,6 +110,8 @@ export default {
         if ((m = path.match(/^\\/api\\/captures\\/(\\d+)$/)) && request.method === 'PATCH') return await hCapturePatch({ request, env, params: { id: m[1] } });
         if (path === '/api/people' && request.method === 'POST') return await hPeoplePost({ request, env });
         if ((m = path.match(/^\\/api\\/people\\/(\\d+)$/)) && request.method === 'PATCH') return await hPersonPatch({ request, env, params: { id: m[1] } });
+        if (path === '/api/events' && request.method === 'POST') return await hEventsPost({ request, env });
+        if ((m = path.match(/^\\/api\\/events\\/(\\d+)$/)) && request.method === 'PATCH') return await hEventPatch({ request, env, params: { id: m[1] } });
         if (path === '/api/logout' && request.method === 'POST') return await hLogoutPost({ request, env });
         return err('Not found.', 404);
       } catch (e) {

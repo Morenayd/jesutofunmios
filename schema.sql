@@ -85,11 +85,22 @@ CREATE TABLE IF NOT EXISTS people (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  date       TEXT NOT NULL,                       -- ISO date YYYY-MM-DD
+  title      TEXT NOT NULL,                       -- the class or session
+  time       TEXT NOT NULL DEFAULT '',            -- free text, e.g. "18:00–20:00 CT"; may be empty
+  notes      TEXT NOT NULL DEFAULT '',
+  created_by TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS activity (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id    INTEGER,                             -- NULL for digest/deadline events
   actor      TEXT NOT NULL,
-  action     TEXT NOT NULL,                       -- created | status_changed | updated | digest_posted | deadline_added | deadline_updated | report_posted | project_added | project_updated | target_added | target_updated | capture_added | capture_filed | capture_unfiled | person_added | person_updated
+  action     TEXT NOT NULL,                       -- created | status_changed | updated | deleted | digest_posted | deadline_added | deadline_updated | deadline_deleted | report_posted | project_added | project_updated | target_added | target_updated | capture_added | capture_filed | capture_unfiled | person_added | person_updated | event_added | event_updated
   note       TEXT DEFAULT '',
   created_at TEXT NOT NULL
 );
@@ -97,6 +108,7 @@ CREATE TABLE IF NOT EXISTS activity (
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due);
 CREATE INDEX IF NOT EXISTS idx_deadlines_date ON deadlines(date);
+CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
 CREATE INDEX IF NOT EXISTS idx_activity_created ON activity(created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_date_author ON reports(date, author);
 CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(date);

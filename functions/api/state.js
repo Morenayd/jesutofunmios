@@ -2,9 +2,10 @@
 // open tasks + latest 50 done, latest digest in full, digest index,
 // deadlines sorted by date, latest 30 activity rows, every daily
 // report from the last 7 days, all projects, all targets, the latest
-// 50 captures, and all people.
+// 50 captures, all people, and events from the last 7 days onward.
 import {
   ensureCapturesTable,
+  ensureEventsTable,
   ensurePeopleTable,
   ensureProjectsTable,
   ensureReportsTable,
@@ -18,6 +19,7 @@ export async function onRequestGet({ env }) {
   await ensureTargetsTable(env);
   await ensureCapturesTable(env);
   await ensurePeopleTable(env);
+  await ensureEventsTable(env);
 
   const open = await env.DB.prepare(
     `SELECT * FROM tasks WHERE status != 'done'
@@ -77,6 +79,16 @@ export async function onRequestGet({ env }) {
   // People: shortlist order (seeded order), oldest first.
   const people = await env.DB.prepare('SELECT * FROM people ORDER BY id ASC').all();
 
+  // Events: classes and sessions, from 7 days ago onward, date order,
+  // capped at 60 — enough for Today, the week strip and the calendar
+  // without shipping the whole history.
+  const eventsStart = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  const events = await env.DB.prepare(
+    'SELECT * FROM events WHERE date >= ? ORDER BY date ASC, id ASC LIMIT 60'
+  )
+    .bind(eventsStart)
+    .all();
+
   return json({
     tasks: [...(open.results || []), ...(done.results || [])],
     latestDigest: latestDigest || null,
@@ -88,5 +100,6 @@ export async function onRequestGet({ env }) {
     targets: targets.results || [],
     captures: captures.results || [],
     people: people.results || [],
+    events: events.results || [],
   });
 }
